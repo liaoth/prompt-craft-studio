@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "midjourney_submissions_user_hash_uq" ON "midjourney_submissions" USING btree ("user_id","content_hash");
