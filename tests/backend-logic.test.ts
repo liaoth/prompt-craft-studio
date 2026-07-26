@@ -7,6 +7,7 @@ import {
 } from "../lib/crypto";
 import {
   isPublicIp,
+  validateAiEndpointUrl,
   validateEndpointUrl,
   validateMidjourneyEndpointUrl,
 } from "../lib/server/endpoints";
@@ -26,7 +27,14 @@ import {
   providerConfigUpdateSchema,
   translationConfigUpdateSchema,
 } from "../lib/server/configs";
-import { phraseUpdateSchema } from "../lib/server/validation";
+import {
+  providersForKind,
+  serviceConfigHelp,
+} from "../lib/service-config-help";
+import {
+  batchDeleteSchema,
+  phraseUpdateSchema,
+} from "../lib/server/validation";
 
 const TEST_KEY = Buffer.alloc(32, 7).toString("base64");
 
@@ -83,7 +91,7 @@ describe("history retention", () => {
     expect(HISTORY_LIMIT).toBe(100);
   });
 
-  it("deduplicates semantically identical parameter objects", () => {
+  it("hashes the full v2 content while normalizing object key order", () => {
     const first = promptContentHash({
       promptZh: "测试",
       promptEn: "test",
@@ -91,12 +99,20 @@ describe("history retention", () => {
       parameters: { stylize: 100, raw: true },
     });
     const second = promptContentHash({
-      promptZh: "不同中文不影响最终提示词身份",
+      promptZh: "测试",
       promptEn: "test",
-      source: "ai",
+      source: "rule",
       parameters: { raw: true, stylize: 100 },
     });
     expect(first).toBe(second);
+    expect(
+      promptContentHash({
+        promptZh: "不同内容",
+        promptEn: "test",
+        source: "rule",
+        parameters: { raw: true, stylize: 100 },
+      }),
+    ).not.toBe(first);
   });
 });
 
@@ -147,6 +163,21 @@ describe("provider endpoint validation", () => {
     expect(isPublicIp("10.0.0.4")).toBe(false);
     expect(isPublicIp("8.8.8.8")).toBe(true);
     expect(isPublicIp("fd00::1")).toBe(false);
+  });
+
+  it("allows only the exact operator-controlled local AI endpoint", async () => {
+    vi.stubEnv(
+      "SITE_AI_ENDPOINT",
+      "http://host.docker.internal:11434/v1/chat/completions",
+    );
+    await expect(
+      validateAiEndpointUrl(
+        "http://host.docker.internal:11434/v1/chat/completions",
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      validateAiEndpointUrl("http://host.docker.internal:11434/api/generate"),
+    ).resolves.toBe(false);
   });
 
   it("requires an operator allowlist for production custom hosts", async () => {
@@ -254,5 +285,35 @@ describe("partial update validation", () => {
     expect(phraseUpdateSchema.parse({ name: "新名称" })).toEqual({
       name: "新名称",
     });
+  });
+});
+
+describe("record deletion and configuration help", () => {
+  it("accepts bounded unique record ids and rejects an empty batch", () => {
+    const ids = [
+      "57fdbeca-07dd-40a2-83fe-497728137210",
+      "c9eb4441-ce8d-49fb-986c-ff28f1227dc1",
+    ];
+    expect(batchDeleteSchema.parse({ ids })).toEqual({ ids });
+    expect(() => batchDeleteSchema.parse({ ids: [] })).toThrow();
+    expect(() => batchDeleteSchema.parse({ ids: [ids[0], ids[0]] })).toThrow();
+  });
+
+  it("provides actionable field help and official links for every config provider", () => {
+    const providers = [
+      ...providersForKind("ai"),
+      ...providersForKind("translation"),
+      ...providersForKind("push"),
+    ];
+    expect(providers).toHaveLength(15);
+    for (const provider of providers) {
+      const help = serviceConfigHelp(provider);
+      expect(help.provider).toBe(provider);
+      expect(help.steps.length).toBeGreaterThanOrEqual(4);
+      expect(help.endpointPlaceholder.length).toBeGreaterThan(8);
+      expect(help.apiKeyPlaceholder.length).toBeGreaterThan(4);
+      if (help.docsUrl) expect(help.docsUrl).toMatch(/^https:\/\//);
+      if (help.keyUrl) expect(help.keyUrl).toMatch(/^https:\/\//);
+    }
   });
 });

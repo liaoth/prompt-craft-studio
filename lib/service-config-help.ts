@@ -1,0 +1,317 @@
+export type ServiceConfigKind = "ai" | "translation" | "push";
+
+export type ServiceConfigHelp = {
+  provider: string;
+  title: string;
+  summary: string;
+  steps: readonly string[];
+  endpoint: string;
+  endpointPlaceholder: string;
+  model?: string;
+  modelPlaceholder?: string;
+  apiKey: string;
+  apiKeyPlaceholder: string;
+  docsUrl?: string;
+  keyUrl?: string;
+  caution?: string;
+};
+
+const HELP: Readonly<Record<string, ServiceConfigHelp>> = {
+  openai: {
+    provider: "openai",
+    title: "OpenAI",
+    summary: "使用 OpenAI Platform 的按量计费 API。它和 ChatGPT Plus 订阅是两套独立服务。",
+    steps: [
+      "登录 OpenAI Platform，完成组织与账单设置。",
+      "在 API Keys 页面创建 Secret key，只复制一次并妥善保存。",
+      "模型填写账户可用的模型 ID；接口留空即可使用项目默认地址。",
+      "保存后先点“测试”，成功后再确认配置处于“已启用”。",
+    ],
+    endpoint: "留空时使用 https://api.openai.com/v1/chat/completions",
+    endpointPlaceholder: "可留空，使用 OpenAI 默认接口",
+    model: "建议从账户的 Models 页面复制精确模型 ID。",
+    modelPlaceholder: "例如：gpt-4.1-mini",
+    apiKey: "填写 sk- 开头的 Secret key。",
+    apiKeyPlaceholder: "sk-…（必填，保存后仅显示遮罩）",
+    docsUrl: "https://platform.openai.com/docs/quickstart",
+    keyUrl: "https://platform.openai.com/api-keys",
+  },
+  anthropic: {
+    provider: "anthropic",
+    title: "Anthropic Claude",
+    summary: "直接调用 Anthropic Messages API，需要 Console 账户、额度和 API Key。",
+    steps: [
+      "登录 Anthropic Console 并设置账单。",
+      "在 Settings → API Keys 创建并复制密钥。",
+      "从官方模型列表复制模型 ID；接口留空使用默认 Messages 地址。",
+      "保存、测试，确认成功后启用。",
+    ],
+    endpoint: "留空时使用 https://api.anthropic.com/v1/messages",
+    endpointPlaceholder: "可留空，使用 Anthropic 默认接口",
+    model: "必须填写 API 接受的完整模型 ID。",
+    modelPlaceholder: "例如：claude-sonnet-4-5",
+    apiKey: "填写 Anthropic Console 创建的 API Key。",
+    apiKeyPlaceholder: "sk-ant-…（必填）",
+    docsUrl: "https://docs.anthropic.com/en/api/getting-started",
+    keyUrl: "https://console.anthropic.com/settings/keys",
+  },
+  gemini: {
+    provider: "gemini",
+    title: "Google Gemini",
+    summary: "使用 Google AI Studio / Gemini API；API Key 与一个 Google Cloud 项目关联。",
+    steps: [
+      "进入 Google AI Studio，选择或创建 Cloud 项目。",
+      "在 API Keys 页面创建密钥，并按官方建议限制为 Gemini API。",
+      "从 Models 页面复制支持 generateContent 的模型 ID。",
+      "接口留空，系统会根据模型名生成 Gemini generateContent 地址，然后测试并启用。",
+    ],
+    endpoint: "通常留空；系统按模型生成 generativelanguage.googleapis.com 地址。",
+    endpointPlaceholder: "建议留空，由系统按模型生成",
+    model: "填写模型 ID，不要带 models/ 前缀。",
+    modelPlaceholder: "例如：gemini-2.5-flash",
+    apiKey: "填写 AI Studio 创建的 Gemini API Key。",
+    apiKeyPlaceholder: "Gemini API Key（必填）",
+    docsUrl: "https://ai.google.dev/gemini-api/docs/models",
+    keyUrl: "https://aistudio.google.com/app/apikey",
+  },
+  deepseek: {
+    provider: "deepseek",
+    title: "DeepSeek",
+    summary: "使用 DeepSeek 开放平台的 OpenAI 兼容 Chat Completions API。",
+    steps: [
+      "登录 DeepSeek 开放平台，充值或确认账户有可用额度。",
+      "创建 API Key 并复制保存。",
+      "从当前模型文档复制模型名；旧模型名可能会下线，不要凭记忆填写。",
+      "接口留空使用默认地址，保存后测试并启用。",
+    ],
+    endpoint: "留空时使用 https://api.deepseek.com/v1/chat/completions",
+    endpointPlaceholder: "可留空，使用 DeepSeek 默认接口",
+    model: "以 DeepSeek 当前模型列表为准。",
+    modelPlaceholder: "例如：deepseek-v4-flash",
+    apiKey: "填写 DeepSeek Platform 创建的 API Key。",
+    apiKeyPlaceholder: "sk-…（必填）",
+    docsUrl: "https://api-docs.deepseek.com/",
+    keyUrl: "https://platform.deepseek.com/api_keys",
+  },
+  qwen: {
+    provider: "qwen",
+    title: "通义千问 / 阿里云百炼",
+    summary: "使用阿里云 Model Studio（百炼）的 OpenAI 兼容接口，Key 与地域/工作空间有关。",
+    steps: [
+      "登录阿里云 Model Studio，首次使用时先开通服务。",
+      "在 API Key 管理中创建 Key，并确认它所属的地域和工作空间。",
+      "填写该地域可用的模型 ID；中国北京默认接口可留空。",
+      "其他地域或子工作空间必须按控制台给出的完整 Chat Completions 地址填写，然后测试。",
+    ],
+    endpoint: "默认使用北京地域 DashScope OpenAI 兼容 Chat Completions 地址。",
+    endpointPlaceholder: "北京地域可留空；其他地域填完整 /chat/completions 地址",
+    model: "模型名和 Key 必须属于同一地域/工作空间。",
+    modelPlaceholder: "例如：qwen-plus",
+    apiKey: "填写 Model Studio API Key，通常以 sk- 或 sk-ws 开头。",
+    apiKeyPlaceholder: "sk-… / sk-ws-…（必填）",
+    docsUrl: "https://help.aliyun.com/en/model-studio/first-api-call-to-qwen",
+    keyUrl: "https://help.aliyun.com/en/model-studio/get-api-key",
+  },
+  doubao: {
+    provider: "doubao",
+    title: "豆包 / 火山方舟",
+    summary: "使用火山方舟 API Key 和模型 ID（部分旧服务使用推理接入点 ID）。",
+    steps: [
+      "登录火山方舟并开通模型服务。",
+      "在 API Key 管理创建方舟专用 API Key，不要填传统 AK/SK。",
+      "从模型列表或推理接入点复制可调用的模型 ID。",
+      "接口留空使用北京地域默认 Chat Completions 地址；其他地域按官方地址填写并测试。",
+    ],
+    endpoint: "留空时使用 https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+    endpointPlaceholder: "北京地域可留空，其他地域填完整接口",
+    model: "填写模型 ID 或账户可用的 Endpoint ID。",
+    modelPlaceholder: "例如：doubao-seed-2-0-lite-260215",
+    apiKey: "填写火山方舟“API Key 管理”创建的 Key。",
+    apiKeyPlaceholder: "ARK API Key（必填）",
+    docsUrl: "https://www.volcengine.com/docs/82379/1795150",
+    keyUrl: "https://console.volcengine.com/ark/apiKey",
+  },
+  zhipu: {
+    provider: "zhipu",
+    title: "智谱 GLM",
+    summary: "使用智谱开放平台标准 Chat Completions API。",
+    steps: [
+      "注册并登录智谱开放平台。",
+      "在 API Keys 管理页面创建 Key。",
+      "从模型概览复制当前可用的模型 ID。",
+      "接口留空使用通用 API；Coding Plan 的 Key 和接口不同，不要混用。",
+    ],
+    endpoint: "留空时使用 https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    endpointPlaceholder: "普通 API 可留空；Coding Plan 请按套餐文档填写",
+    model: "填写开放平台当前可调用的精确模型 ID。",
+    modelPlaceholder: "例如：glm-4-flash",
+    apiKey: "填写普通 API Key；若使用 Coding Plan，需使用套餐专用 Key 和专用接口。",
+    apiKeyPlaceholder: "智谱 API Key（必填）",
+    docsUrl: "https://docs.bigmodel.cn/cn/guide/develop/http/introduction",
+    keyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
+  },
+  kimi: {
+    provider: "kimi",
+    title: "Kimi / Moonshot AI",
+    summary: "使用 Moonshot AI 开放平台的 OpenAI 兼容接口。",
+    steps: [
+      "登录 Moonshot AI 开放平台，完成实名/账单设置。",
+      "在 API Key 管理创建并复制 Key。",
+      "从模型列表复制账户当前可用的模型 ID。",
+      "接口留空使用默认 Chat Completions 地址，保存后测试。",
+    ],
+    endpoint: "留空时使用 https://api.moonshot.cn/v1/chat/completions",
+    endpointPlaceholder: "可留空，使用 Moonshot 默认接口",
+    model: "填写 Moonshot 开放平台中的模型 ID。",
+    modelPlaceholder: "例如：moonshot-v1-8k",
+    apiKey: "填写 Moonshot 开放平台 API Key。",
+    apiKeyPlaceholder: "Moonshot API Key（必填）",
+    docsUrl: "https://platform.moonshot.cn/docs/guide/start-using-kimi-api",
+    keyUrl: "https://platform.moonshot.cn/console/api-keys",
+  },
+  minimax: {
+    provider: "minimax",
+    title: "MiniMax",
+    summary: "使用 MiniMax 开放平台文本生成 API。",
+    steps: [
+      "登录 MiniMax 开放平台并开通按量付费或 Token Plan。",
+      "在接口密钥中创建 API Key；Token Plan Key 与按量付费 Key 不通用。",
+      "从文本生成模型列表复制模型 ID。",
+      "接口留空使用默认 Chat Completions 地址，保存后测试。",
+    ],
+    endpoint: "留空时使用 https://api.minimax.io/v1/chat/completions",
+    endpointPlaceholder: "可留空，使用 MiniMax 默认接口",
+    model: "填写当前文本模型 ID。",
+    modelPlaceholder: "例如：MiniMax-M2.1",
+    apiKey: "填写与所用额度类型对应的 Key。",
+    apiKeyPlaceholder: "MiniMax API Key（必填）",
+    docsUrl: "https://platform.minimaxi.com/docs/api-reference/api-overview",
+    keyUrl: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+  },
+  custom: {
+    provider: "custom",
+    title: "自定义 OpenAI 兼容 / Ollama",
+    summary: "适合 Ollama、LM Studio 或其他兼容 Chat Completions 的服务；必须填写完整请求地址。",
+    steps: [
+      "先在模型服务中下载/启用模型，并确认 OpenAI 兼容接口可访问。",
+      "模型名称必须与服务端列出的 ID 完全一致。",
+      "接口填写完整的 /v1/chat/completions 地址，不要只填主机或 /v1。",
+      "个人配置禁止 localhost/内网地址；本机 Ollama 应由管理员通过 SITE_AI_* 配成站点共享服务。",
+    ],
+    endpoint: "必须是服务器可访问且通过安全白名单的完整 HTTPS Chat Completions 地址。",
+    endpointPlaceholder: "例如：https://models.example.com/v1/chat/completions",
+    model: "Ollama 可用 ollama list 查看精确模型名。",
+    modelPlaceholder: "例如：qwen2.5:3b",
+    apiKey: "当前表单要求填写；无鉴权服务可填服务端约定的占位值。",
+    apiKeyPlaceholder: "API Key；无鉴权时填 ollama",
+    docsUrl: "https://docs.ollama.com/api/openai-compatibility",
+    caution: "自定义公网域名还需要管理员加入 CUSTOM_ENDPOINT_HOST_ALLOWLIST；浏览器中的 localhost 指向容器自身，不能作为个人配置。",
+  },
+  libretranslate: {
+    provider: "libretranslate",
+    title: "LibreTranslate",
+    summary: "可使用自托管或公共 LibreTranslate，项目直接调用 JSON /translate 接口。",
+    steps: [
+      "先部署 LibreTranslate，或确认你有可用的公共实例。",
+      "复制完整 /translate 地址；自托管启用 API Key 时再填写 Key。",
+      "确认实例已加载 en 与 zh-Hans（或相应中文代码）语言。",
+      "保存后点测试；个人服务失败时会回退到站点共享 LibreTranslate。",
+    ],
+    endpoint: "填写完整的 /translate 地址；留空会尝试 libretranslate.com 公共地址。",
+    endpointPlaceholder: "例如：https://translate.example.com/translate",
+    apiKey: "自托管未启用 Key 可留空；启用后填部署生成的 API Key。",
+    apiKeyPlaceholder: "可选：LibreTranslate API Key",
+    docsUrl: "https://docs.libretranslate.com/guides/installation/",
+    caution: "个人配置必须使用可从应用服务器访问的公网 HTTPS 地址；本机/内网实例应配置为站点共享服务。",
+  },
+  deepl: {
+    provider: "deepl",
+    title: "DeepL API",
+    summary: "需要 DeepL API Free 或 Pro 账户，不是普通网页版 DeepL 登录。",
+    steps: [
+      "注册 DeepL API Free 或 Pro 套餐。",
+      "在账户的 API Keys / Authentication Key 页面复制密钥。",
+      "Free 套餐接口可留空；Pro 套餐把接口改为 api.deepl.com。",
+      "保存并测试，401 通常表示 Key 或套餐接口不匹配。",
+    ],
+    endpoint: "Free 默认 https://api-free.deepl.com/v2/translate；Pro 使用 https://api.deepl.com/v2/translate",
+    endpointPlaceholder: "Free 可留空；Pro 填 https://api.deepl.com/v2/translate",
+    apiKey: "必须填写 DeepL Authentication Key。",
+    apiKeyPlaceholder: "DeepL Authentication Key（必填）",
+    docsUrl: "https://developers.deepl.com/docs/getting-started/auth",
+    keyUrl: "https://www.deepl.com/your-account/keys",
+  },
+  google: {
+    provider: "google",
+    title: "Google Cloud Translation",
+    summary: "本项目使用 Cloud Translation Basic v2 的 API Key 方式。",
+    steps: [
+      "在 Google Cloud 创建/选择项目并启用结算。",
+      "启用 Cloud Translation API。",
+      "创建 API Key，并限制该 Key 只能访问 Cloud Translation API。",
+      "接口通常留空，保存后测试；不要填写 v3 服务账号 JSON。",
+    ],
+    endpoint: "留空时使用 https://translation.googleapis.com/language/translate/v2",
+    endpointPlaceholder: "可留空，使用 Google Translation Basic v2",
+    apiKey: "填写 Google Cloud API Key；本项目不是使用服务账号 JSON。",
+    apiKeyPlaceholder: "Google Cloud API Key（必填）",
+    docsUrl: "https://cloud.google.com/translate/docs/setup",
+    keyUrl: "https://console.cloud.google.com/apis/credentials",
+  },
+  discord_webhook: {
+    provider: "discord_webhook",
+    title: "Discord Webhook",
+    summary: "把当前 Prompt 文本发到指定 Discord 频道，不会触发 Midjourney 出图。",
+    steps: [
+      "你需要对目标 Discord 服务器有“管理 Webhook”权限。",
+      "进入服务器设置 → Integrations（集成）→ Webhooks → New Webhook。",
+      "选择频道并复制完整 Webhook URL，粘贴到接口地址。",
+      "API Key 留空，保存后测试；测试会向入口发起真实请求。",
+    ],
+    endpoint: "必须是 https://discord.com/api/webhooks/... 的完整 Webhook URL。",
+    endpointPlaceholder: "https://discord.com/api/webhooks/…/…",
+    apiKey: "Discord Webhook URL 已包含凭据，这里留空。",
+    apiKeyPlaceholder: "Discord Webhook 不需要填写",
+    docsUrl: "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
+    caution: "Webhook 只发送文本。它不会模拟 /imagine，也不会返回 Midjourney 图片任务状态。",
+  },
+  custom_http: {
+    provider: "custom_http",
+    title: "自定义 HTTP 推送",
+    summary: "把 Prompt、快照与参数以 JSON POST 到你自己维护的 HTTPS 接口。",
+    steps: [
+      "先准备一个能够接收 POST JSON 的公网 HTTPS 接口。",
+      "让管理员把目标域名加入 CUSTOM_ENDPOINT_HOST_ALLOWLIST。",
+      "如接口使用 Bearer Token，把 Token 填入 API Key；否则留空。",
+      "保存并测试，检查接收端日志确认 JSON 已到达。",
+    ],
+    endpoint: "必须是公网 HTTPS 地址，禁止 localhost、内网 IP 和未加入白名单的域名。",
+    endpointPlaceholder: "例如：https://hooks.example.com/prompt",
+    apiKey: "可选；填写后发送 Authorization: Bearer <API Key>。",
+    apiKeyPlaceholder: "可选：Bearer Token",
+    caution: "这是通用文本/JSON 推送，不是 Midjourney 官方任务接口。",
+  },
+};
+
+export function serviceConfigHelp(provider: string): ServiceConfigHelp {
+  return HELP[provider] ?? HELP.custom;
+}
+
+export function providersForKind(kind: ServiceConfigKind): readonly string[] {
+  if (kind === "ai") {
+    return [
+      "openai",
+      "anthropic",
+      "gemini",
+      "deepseek",
+      "qwen",
+      "doubao",
+      "zhipu",
+      "kimi",
+      "minimax",
+      "custom",
+    ];
+  }
+  if (kind === "translation") return ["libretranslate", "deepl", "google"];
+  return ["discord_webhook", "custom_http"];
+}

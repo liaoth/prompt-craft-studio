@@ -263,9 +263,44 @@ export function sharedTranslationConfig(): TranslationConfig | undefined {
   const endpoint = sharedLibreTranslateEndpoint();
   if (!endpoint) return undefined;
   const apiKey = process.env.SHARED_LIBRETRANSLATE_API_KEY?.trim();
+  const chineseLanguageCode =
+    process.env.SHARED_LIBRETRANSLATE_CHINESE_LANGUAGE_CODE?.trim();
   return TranslationConfigSchema.parse({
     provider: "libretranslate",
     endpoint,
     ...(apiKey ? { apiKey } : {}),
+    ...(chineseLanguageCode ? { chineseLanguageCode } : {}),
   });
+}
+
+/**
+ * Site-wide AI fallback. It is intentionally returned only to server code;
+ * callers must never serialize this object because it contains the raw key.
+ */
+export function sharedAiConfig(): AiProviderConfig | undefined {
+  const provider = process.env.SITE_AI_PROVIDER?.trim();
+  const model = process.env.SITE_AI_MODEL?.trim();
+  const apiKey = process.env.SITE_AI_API_KEY?.trim();
+  const endpoint = process.env.SITE_AI_ENDPOINT?.trim();
+  if (!provider || !model || !apiKey) return undefined;
+  return AiProviderConfigSchema.parse({
+    provider,
+    model,
+    apiKey,
+    ...(endpoint ? { endpoint } : {}),
+  });
+}
+
+export function sharedAiTimeoutMs(): number | undefined {
+  const raw = process.env.SITE_AI_TIMEOUT_MS?.trim();
+  if (!raw) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 120_000) {
+    throw new ApiError(
+      500,
+      "SITE_AI_TIMEOUT_MS must be an integer between 1 and 120000.",
+      "INVALID_SITE_CONFIG",
+    );
+  }
+  return value;
 }

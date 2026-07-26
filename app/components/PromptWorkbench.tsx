@@ -1,53 +1,126 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  MeasuringStrategy,
+  PointerSensor,
+  closestCenter,
+  pointerWithin,
+  useDraggable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+  type CollisionDetection,
+} from "@dnd-kit/core";
+import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+import {
+  Archive,
+  Bot,
   Check,
+  ChevronRight,
   CircleAlert,
-  CircleUserRound,
   Copy,
+  Download,
+  ExternalLink,
+  FolderPlus,
   Heart,
-  KeyRound,
+  History,
   Library,
+  Languages,
   LoaderCircle,
-  Pencil,
+  LogOut,
+  Menu,
   Plus,
   RefreshCw,
+  Save,
   Send,
-  Settings2,
   ShieldCheck,
-  SlidersHorizontal,
+  Settings2,
+  Sparkles,
   Trash2,
   WandSparkles,
   X,
 } from "lucide-react";
 import {
-  type FormEvent,
-  type KeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type FormEvent,
 } from "react";
 
+import { authClient } from "@/lib/auth-client";
 import {
-  MIDJOURNEY_MODELS,
-  emptyPromptFields,
+  providersForKind,
+  serviceConfigHelp,
+  type ServiceConfigHelp,
+} from "@/lib/service-config-help";
+import {
+  blocksToFields,
+  composePromptBodies,
+  createPromptBlock,
+  movePromptBlock,
+  negativeValues,
+  normalizeBlockOrder,
+  orderedBlocks,
+  parametersWithNegativeBlocks,
+  PROMPT_FIELD_LABELS,
+  reconcileNegativeBlocks,
+  stripNegativeParameter,
+} from "@/lib/prompt/blocks";
+import {
+  extractParametersFromPrompt,
+  filterUnsupportedParameters,
+} from "@/lib/prompt/parameters";
+import {
+  composePromptWithReferences,
+  EMPTY_PROMPT_REFERENCES,
+  extractReferencesFromPrompt,
+  validatePromptConfiguration,
+} from "@/lib/prompt/references";
+import {
+  DEFAULT_PHRASES,
+  DEFAULT_PHRASE_CATEGORIES,
+  type DefaultPhrase,
+} from "@/lib/prompt/default-phrases";
+import { PROMPT_TEMPLATES, type PromptTemplate } from "@/lib/prompt/templates";
+import {
+  PromptSnapshotSchema,
+  PromptSnapshotV4Schema,
+  type PromptBlock,
   type PromptDraft,
-  type PromptFields,
   type PromptParameters,
+  type PromptReferences,
+  type PromptSnapshot,
   type PromptSource,
+  type PromptVariant,
+  type PromptVariantKind,
   type PromptWarning,
+  type TargetSurface,
+  type TaskType,
 } from "@/lib/prompt/types";
-import { serializeParameters, validateParameters } from "@/lib/prompt/parameters";
+import {
+  appendPromptTokenBlocks,
+  splitPromptTokenInput,
+  unlockPromptBlockEnglish,
+  updatePromptBlockText,
+} from "@/lib/prompt/token-editor";
+import {
+  BilingualTokenEditor,
+  type BlockTranslationStatus,
+} from "./workbench/BilingualTokenEditor";
+import { BlockEditor } from "./workbench/BlockEditor";
+import { ControlHelp } from "./workbench/ControlHelp";
+import { ParameterPanel } from "./workbench/ParameterPanel";
+import { ReferencePanel } from "./workbench/ReferencePanel";
 
-type WorkbenchFieldKey = keyof PromptFields | "custom";
-type DrawerTab = "phrases" | "history" | "favorites" | "submissions" | "settings";
+type DrawerTab = "phrases" | "history" | "library" | "submissions" | "settings";
 type MobileTab = "materials" | "create" | "parameters";
-type ConnectionState = "checking" | "connected" | "guest" | "offline";
-
-type WorkbenchFields = PromptFields & { custom: string };
 
 type PhraseSnippet = {
   id: string;
@@ -55,32 +128,55 @@ type PhraseSnippet = {
   category: string;
   content: string;
   sortOrder: number;
-  createdAt?: string;
-  updatedAt?: string;
 };
-
-type StoredSnapshot = {
-  promptZh: string;
-  promptEn: string;
-  source: PromptSource;
-  input?: Partial<PromptFields>;
-  fields?: Partial<PromptFields>;
-  translatedFields?: Partial<PromptFields>;
-  parameters?: PromptParameters;
-  warnings?: PromptWarning[];
+type PhraseLibraryItem = {
+  id: string;
+  name: string;
+  category: string;
+  content: string;
+  targetField: PromptBlock["field"];
+  textZh: string;
+  textEn: string;
+  source: "default" | "personal";
 };
-
+type ActiveDragItem =
+  | { type: "phrase"; phrase: PhraseLibraryItem }
+  | { type: "block"; block: PromptBlock };
+type TranslationTarget = {
+  block: PromptBlock;
+  sourceLanguage: "zh" | "en";
+  targetLanguage: "zh" | "en";
+  direction: "zh-en" | "en-zh";
+  source: string;
+};
+type BlockUpdater = PromptBlock[] | ((blocks: PromptBlock[]) => PromptBlock[]);
 type PromptRecord = {
   id: string;
   promptZh: string;
   promptEn: string;
   source: PromptSource;
-  snapshot: StoredSnapshot;
-  note?: string;
+  snapshot: unknown;
   createdAt?: string;
   updatedAt?: string;
 };
-
+type FavoriteRecord = PromptRecord & {
+  title: string;
+  note: string;
+  folderId: string | null;
+  revisionCount: number;
+};
+type FolderRecord = {
+  id: string;
+  name: string;
+  sortOrder: number;
+  itemCount: number;
+};
+type RevisionRecord = {
+  id: string;
+  revisionNo: number;
+  snapshot: unknown;
+  createdAt: string;
+};
 type PublicConfig = {
   id: string;
   label: string;
@@ -89,390 +185,49 @@ type PublicConfig = {
   model?: string;
   apiKeyMasked: string;
   isActive: boolean;
-  createdAt?: string;
-  updatedAt?: string;
 };
-
-type MidjourneySubmission = {
+type SiteServiceSummary = {
+  ai:
+    | { configured: false }
+    | {
+        configured: true;
+        service: string;
+        provider: string;
+        model: string;
+        endpoint: string;
+        apiKeyConfigured: boolean;
+        timeoutMs: number;
+      };
+  translation:
+    | { configured: false }
+    | {
+        configured: true;
+        service: string;
+        provider: string;
+        endpoint: string;
+        apiKeyConfigured: boolean;
+        chineseLanguageCode: string;
+      };
+};
+type SubmissionRecord = {
   id: string;
-  promptZh: string;
+  status: "pending" | "sent" | "failed";
   promptEn: string;
-  source: PromptSource;
-  status: "pending" | "sent" | "failed";
   errorMessage?: string | null;
-  createdAt?: string;
   updatedAt?: string;
 };
+type ListResponse<T> = { items: T[]; total?: number };
+type ApiFailure = { error?: string; message?: string; code?: string };
 
-type PhraseForm = {
-  id?: string;
-  name: string;
-  category: string;
-  content: string;
-  sortOrder: number;
+const VARIANT_LABELS: Record<PromptVariantKind, string> = {
+  concise: "简洁",
+  detailed: "详细",
+  experimental: "实验性",
 };
 
-type AiConfigForm = {
-  label: string;
-  provider: string;
-  model: string;
-  endpoint: string;
-  apiKey: string;
-  isActive: boolean;
-};
-
-type TranslationConfigForm = {
-  label: string;
-  provider: string;
-  endpoint: string;
-  apiKey: string;
-  isActive: boolean;
-};
-
-type MidjourneyConfigForm = {
-  label: string;
-  provider: "discord_webhook" | "custom_http";
-  endpoint: string;
-  apiKey: string;
-  isActive: boolean;
-};
-
-type ListResponse<T> = {
-  items: T[];
-  total?: number;
-  page?: number;
-  pages?: number;
-};
-
-type GenerateResponse = {
-  draft: PromptDraft;
-  historyId: string;
-};
-
-type SubmissionResponse = {
-  submissionId: string;
-  status: "pending" | "sent" | "failed";
-  details: string;
-};
-
-type Template = {
-  id: string;
-  title: string;
-  eyebrow: string;
-  accent: string;
-  fields: Partial<WorkbenchFields>;
-  translatedFields: Partial<PromptFields>;
-};
-
-const EMPTY_FIELDS: WorkbenchFields = { ...emptyPromptFields(), custom: "" };
-
-const FIELD_META: ReadonlyArray<{
-  key: WorkbenchFieldKey;
-  label: string;
-  hint: string;
-  wide?: boolean;
-}> = [
-  { key: "subject", label: "主体", hint: "人物、物体或核心画面", wide: true },
-  { key: "action", label: "动作", hint: "角色正在进行的行为描述" },
-  { key: "environment", label: "环境", hint: "时间、地点、场景背景" },
-  { key: "medium", label: "媒介", hint: "摄影、插画、3D 渲染" },
-  { key: "style", label: "风格", hint: "视觉语言与年代感" },
-  { key: "composition", label: "构图", hint: "对称、留白、黄金分割" },
-  { key: "camera", label: "镜头", hint: "景别、焦段、机位" },
-  { key: "lighting", label: "灯光", hint: "光源、光质、方向" },
-  { key: "color", label: "色彩", hint: "配色、饱和度、色调" },
-  { key: "material", label: "材质", hint: "表面、纹理、质感" },
-  { key: "mood", label: "氛围", hint: "情绪和叙事感" },
-  { key: "negative", label: "排除内容", hint: "不希望出现的元素" },
-  {
-    key: "custom",
-    label: "自定义补充",
-    hint: "没有输入焦点时，常用词会插入这里",
-    wide: true,
-  },
-];
-
-/*
-const TEMPLATES: Template[] = [
-  {
-    id: "cinematic",
-    title: "鐢靛奖鎰熶汉鍍?",
-    eyebrow: "PORTRAIT",
-    accent: "绱綏鍏?",
-    fields: {
-      subject: "涓€浣嶇┛榛戣壊椋庤。鐨勫勾杞诲コ鎬э紝绁炴儏鍧氬畾",
-      action: "杩庣潃椋庡洖澶村嚌鏈涢暅澶?",
-      environment: "闆ㄥ鐨勬湭鏉ラ兘甯傝閬擄紝闇撹櫣鍊掑奖",
-      medium: "鐢靛奖鍓х収锛岀湡瀹炴憚褰?",
-      style: "鏂伴粦鑹茬數褰憋紝鍏嬪埗鐨勮禌鍗氭湅鍏?",
-      composition: "涓夊垎娉曟瀯鍥撅紝娴呮櫙娣憋紝鍓嶆櫙閬尅",
-      camera: "85mm 浜哄儚闀滃ご锛屼綆鏈轰綅杩戞櫙",
-      lighting: "闈掔传闇撹櫣渚у厜锛屾煍鍜岃疆寤撳厜",
-      color: "娣辫摑銆佺传鑹蹭笌灏戦噺鏆栨",
-      material: "娼箍娌ラ潚锛岀粏鑵荤毊鑲わ紝纾ㄧ爞甯冩枡",
-      mood: "绁炵銆佸喎闈欍€佸厖婊℃晠浜嬫劅",
-      negative: "鏂囧瓧锛屾按鍗帮紝澶氫綑鎵嬫寚锛岃繃搴︾（鐨?",
-    },
-    translatedFields: {
-      subject: "a determined young woman in a black trench coat",
-      action: "turning into the wind and looking back at the camera",
-      environment: "a futuristic city street at night in the rain, neon reflections",
-      medium: "cinematic still, photorealistic photography",
-      style: "neo-noir, restrained cyberpunk",
-      composition: "rule of thirds, shallow depth of field, foreground framing",
-      camera: "85mm portrait lens, low-angle close shot",
-      lighting: "cyan and violet neon side light, soft rim light",
-      color: "deep blue, violet, subtle warm orange accents",
-      material: "wet asphalt, natural skin texture, matte fabric",
-      mood: "mysterious, calm, narrative",
-      negative: "text, watermark, extra fingers, plastic skin",
-    },
-  },
-  {
-    id: "product",
-    title: "楂樼浜у搧骞垮憡",
-    eyebrow: "COMMERCIAL",
-    accent: "鐢靛厜钃?",
-    fields: {
-      subject: "涓€鐡舵瀬绠€璁捐鐨勯€忔槑棣欐按锛屾偓娴湪鐢婚潰涓ぎ",
-      environment: "鏃犵紳娣辫壊褰辨鑳屾櫙锛岃杽闆剧幆缁?",
-      medium: "鍟嗕笟浜у搧鎽勫奖锛岃秴鍐欏疄",
-      style: "濂緢鍝佸箍鍛婏紝鐜颁唬鏋佺畝涓讳箟",
-      composition: "灞呬腑鏋勫浘锛屽ぇ闈㈢Н鐣欑櫧",
-      camera: "100mm 寰窛闀滃ご锛屾闈㈣瑙?",
-      lighting: "閿愬埄椤跺厜涓庤摑鑹茶竟缂樺厜锛岄珮鍏夊彈鎺?",
-      color: "榛戣壊銆侀€忔槑鐜荤拑銆佺數鍏夎摑",
-      material: "鍏夊鐜荤拑锛屾媺涓濋噾灞烇紝缁嗗井姘寸彔",
-      mood: "绮捐嚧銆佸喎鍐姐€佹湭鏉ユ劅",
-      negative: "鏂囧瓧锛屾爣蹇楋紝鏍囩鍙樺舰锛屽粔浠峰鏂欐劅",
-    },
-    translatedFields: {
-      subject: "a minimalist transparent perfume bottle floating at the center",
-      environment: "seamless dark studio background, surrounded by subtle mist",
-      medium: "commercial product photography, hyperrealistic",
-      style: "luxury advertising, modern minimalism",
-      composition: "centered composition, generous negative space",
-      camera: "100mm macro lens, straight-on view",
-      lighting: "crisp top light with electric-blue rim lighting",
-      color: "black, clear glass, electric blue",
-      material: "optical glass, brushed metal, fine water droplets",
-      mood: "refined, cool, futuristic",
-      negative: "text, logo, warped label, cheap plastic texture",
-    },
-  },
-  {
-    id: "architecture",
-    title: "寤虹瓚姒傚康鍦烘櫙",
-    eyebrow: "ARCHITECTURE",
-    accent: "钖勮嵎闈?",
-    fields: {
-      subject: "鎮礀杈圭殑鐜颁唬缇庢湳棣嗭紝娴佺嚎鍨嬬櫧鑹蹭綋鍧?",
-      environment: "浜戞捣涔嬩笂鐨勯珮灞憋紝鏃ュ嚭鍓嶇殑钃濊皟鏃跺埢",
-      medium: "寤虹瓚鍙鍖栵紝鍐欏疄 3D 娓叉煋",
-      style: "鏈潵涓讳箟锛屾湁鏈虹幇浠ｅ缓绛?",
-      composition: "瓒呭箍瑙掑叏鏅紝寮曞绾挎瀯鍥?",
-      camera: "24mm 绉昏酱闀滃ご锛岀暐楂樿瑙?",
-      lighting: "娓呮櫒婕皠鍏夛紝瀹ゅ唴鏆栧厜閫忓嚭",
-      color: "鍐风伆銆侀浘钃濄€佹煍鍜岀惀鐝€鑹?",
-      material: "鐧借壊娣峰嚌鍦燂紝鐜荤拑锛屾祬鑹叉湪鏉?",
-      mood: "闈欒哀銆佸．闃斻€佹矇鎬?",
-      negative: "浜虹墿鎷ユ尋锛屾枃瀛楋紝姣斾緥澶辩湡锛岃繃鏇?",
-    },
-    translatedFields: {
-      subject: "a modern art museum on a cliff, flowing white architectural volumes",
-      environment: "high mountains above a sea of clouds, blue hour before sunrise",
-      medium: "architectural visualization, realistic 3D render",
-      style: "futurist, organic modern architecture",
-      composition: "ultra-wide panorama, leading-line composition",
-      camera: "24mm tilt-shift lens, slightly elevated viewpoint",
-      lighting: "soft dawn light with warm interior illumination",
-      color: "cool gray, mist blue, soft amber",
-      material: "white concrete, glass, pale timber",
-      mood: "serene, monumental, contemplative",
-      negative: "crowds, text, distorted scale, overexposure",
-    },
-  },
-  {
-    id: "anime",
-    title: "鍔ㄦ极瑙掕壊璁捐",
-    eyebrow: "CHARACTER",
-    accent: "鐝婄憵绮?",
-    fields: {
-      subject: "鏉ヨ嚜娴┖鍩庣殑鏈烘淇′娇灏戝コ锛岄摱鑹茬煭鍙?",
-      action: "鍗曟墜鎻′綇鍙戝厜淇′欢锛屽噯澶囪捣璺?",
-      environment: "浜戠鍒楄溅绔欙紝宸ㄥぇ鐨勯娇杞笌椋為笩",
-      medium: "绮剧粏浜岀淮鍔ㄧ敾鍘熺敾",
-      style: "鏃ョ郴骞绘兂鍔ㄧ敾锛屾竻鏅扮嚎绋?",
-      composition: "鍔ㄦ€佸瑙掔嚎鏋勫浘锛屽叏韬鑹茶璁?",
-      camera: "35mm 骞胯锛屽钩瑙?",
-      lighting: "娓呴€忓崍鍚庨槼鍏夛紝鏌斾寒鍙嶅皠鍏?",
-      color: "澶╃┖钃濄€佽薄鐗欑櫧銆佺強鐟氱孩",
-      material: "榛勯摐鏈烘锛屼笣缁告姭椋庯紝杞荤泩浜戦浘",
-      mood: "鑷敱銆佹槑蹇€佸啋闄╁惎绋?",
-      negative: "鍐欏疄鐓х墖锛屾枃瀛楋紝姘村嵃锛屾墜閮ㄩ敊璇?",
-    },
-    translatedFields: {
-      subject: "a mechanical messenger girl from a floating city, short silver hair",
-      action: "holding a glowing letter in one hand, ready to sprint",
-      environment: "a station above the clouds, monumental gears and flying birds",
-      medium: "high-detail 2D animation key art",
-      style: "Japanese fantasy animation, clean linework",
-      composition: "dynamic diagonal composition, full-body character design",
-      camera: "35mm wide angle, eye level",
-      lighting: "clear afternoon sunlight, soft luminous bounce light",
-      color: "sky blue, ivory white, coral red",
-      material: "brass machinery, silk cape, weightless cloud mist",
-      mood: "free-spirited, bright, beginning an adventure",
-      negative: "photorealism, text, watermark, malformed hands",
-    },
-  },
-];
-*/
-const TEMPLATES: Template[] = [
-  {
-    id: "cinematic",
-    title: "电影感人像",
-    eyebrow: "PORTRAIT",
-    accent: "紫罗兰",
-    fields: {
-      subject: "一位穿黑色风衣的年轻女性，神情坚定",
-      action: "迎着风回头凝望镜头",
-      environment: "雨夜的未来都市街道，霓虹倒影",
-      medium: "电影剧照，真实摄影",
-      style: "新黑色电影，克制的赛博朋克",
-      composition: "三分法构图，浅景深，前景遮挡",
-      camera: "85mm 人像镜头，低机位近景",
-      lighting: "青紫霓虹侧光，柔和轮廓光",
-      color: "深蓝、紫色与少量暖橙",
-      material: "潮湿沥青，细腻皮肤，磨砂布料",
-      mood: "神秘、冷静、充满故事感",
-      negative: "文字，水印，多余手指，塑料皮肤",
-    },
-    translatedFields: {
-      subject: "a determined young woman in a black trench coat",
-      action: "turning into the wind and looking back at the camera",
-      environment: "a futuristic city street at night in the rain, neon reflections",
-      medium: "cinematic still, photorealistic photography",
-      style: "neo-noir, restrained cyberpunk",
-      composition: "rule of thirds, shallow depth of field, foreground framing",
-      camera: "85mm portrait lens, low-angle close shot",
-      lighting: "cyan and violet neon side light, soft rim light",
-      color: "deep blue, violet, subtle warm orange accents",
-      material: "wet asphalt, natural skin texture, matte fabric",
-      mood: "mysterious, calm, narrative",
-      negative: "text, watermark, extra fingers, plastic skin",
-    },
-  },
-  {
-    id: "product",
-    title: "高端产品广告",
-    eyebrow: "COMMERCIAL",
-    accent: "电光蓝",
-    fields: {
-      subject: "一瓶极简透明香水，悬浮在画面中央",
-      environment: "无缝深色影棚背景，薄雾环绕",
-      medium: "商业产品摄影，超写实",
-      style: "奢侈品广告，现代极简主义",
-      composition: "居中构图，大面积留白",
-      camera: "100mm 微距镜头，正面视角",
-      lighting: "锐利顶光与蓝色边缘光",
-      color: "黑色、透明玻璃、电光蓝",
-      material: "光学玻璃，拉丝金属，细微水珠",
-      mood: "精致、冷冽、未来感",
-      negative: "文字，标志，标签变形，廉价塑料感",
-    },
-    translatedFields: {
-      subject: "a minimalist transparent perfume bottle floating at the center",
-      environment: "seamless dark studio background, surrounded by subtle mist",
-      medium: "commercial product photography, hyperrealistic",
-      style: "luxury advertising, modern minimalism",
-      composition: "centered composition, generous negative space",
-      camera: "100mm macro lens, straight-on view",
-      lighting: "crisp top light with electric-blue rim lighting",
-      color: "black, clear glass, electric blue",
-      material: "optical glass, brushed metal, fine water droplets",
-      mood: "refined, cool, futuristic",
-      negative: "text, logo, warped label, cheap plastic texture",
-    },
-  },
-  {
-    id: "architecture",
-    title: "建筑概念场景",
-    eyebrow: "ARCHITECTURE",
-    accent: "薄荷青",
-    fields: {
-      subject: "悬崖边的现代美术馆，流线型白色体块",
-      environment: "云海之上的高山，日出前的蓝调时刻",
-      medium: "建筑可视化，写实 3D 渲染",
-      style: "未来主义，有机现代建筑",
-      composition: "超广角全景，引导线构图",
-      camera: "24mm 移轴镜头，略高视角",
-      lighting: "清晨漫射光，室内暖光透出",
-      color: "冷灰、雾蓝、柔和琥珀色",
-      material: "白色混凝土，玻璃，浅色木材",
-      mood: "静谧、壮阔、沉思",
-      negative: "人物拥挤，文字，比例失真，过曝",
-    },
-    translatedFields: {
-      subject: "a modern art museum on a cliff, flowing white architectural volumes",
-      environment: "high mountains above a sea of clouds, blue hour before sunrise",
-      medium: "architectural visualization, realistic 3D render",
-      style: "futurist, organic modern architecture",
-      composition: "ultra-wide panorama, leading-line composition",
-      camera: "24mm tilt-shift lens, slightly elevated viewpoint",
-      lighting: "soft dawn light with warm interior illumination",
-      color: "cool gray, mist blue, soft amber",
-      material: "white concrete, glass, pale timber",
-      mood: "serene, monumental, contemplative",
-      negative: "crowds, text, distorted scale, overexposure",
-    },
-  },
-];
-
-const CURATED_PHRASES: PhraseSnippet[] = [
-  { id: "demo-1", name: "電影光影", category: "光影", content: "cinematic volumetric lighting", sortOrder: 0 },
-  { id: "demo-2", name: "细腻质感", category: "质感", content: "intricate tactile details", sortOrder: 0 },
-  { id: "demo-3", name: "設計感", category: "風格", content: "high-fashion editorial aesthetic", sortOrder: 0 },
-  { id: "demo-4", name: "鏡頭構圖", category: "構圖", content: "dynamic diagonal composition", sortOrder: 0 },
-  { id: "demo-5", name: "电影色彩", category: "色彩", content: "cinematic color grading", sortOrder: 0 },
-  { id: "demo-6", name: "細節素材", category: "質感", content: "highly detailed, crisp micro-textures", sortOrder: 0 },
-];
-
-const DEFAULT_PARAMETERS: PromptParameters = {
-  model: "7",
-  aspectRatio: "16:9",
-  stylize: 250,
-  chaos: 8,
-  weird: 0,
-  quality: 1,
-  raw: false,
-  tile: false,
-  no: [],
-};
-
-const DEFAULT_AI_FORM: AiConfigForm = {
-  label: "OpenAI",
-  provider: "openai",
-  model: "gpt-4.1-mini",
-  endpoint: "",
-  apiKey: "",
-  isActive: true,
-};
-
-const DEFAULT_TRANSLATION_FORM: TranslationConfigForm = {
-  label: "LibreTranslate",
-  provider: "libretranslate",
-  endpoint: "",
-  apiKey: "",
-  isActive: true,
-};
-
-const DEFAULT_MIDJOURNEY_FORM: MidjourneyConfigForm = {
-  label: "Discord Webhook",
-  provider: "discord_webhook",
-  endpoint: "",
-  apiKey: "",
-  isActive: true,
+const WORKBENCH_COLLISION_DETECTION: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  return pointerCollisions.length ? pointerCollisions : closestCenter(args);
 };
 
 class ApiRequestError extends Error {
@@ -493,1913 +248,1877 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  const value = (await response.json().catch(() => ({}))) as {
-    error?: string;
-    message?: string;
-    code?: string;
-  };
+  const body = (await response.json().catch(() => ({}))) as ApiFailure;
   if (!response.ok) {
-  throw new ApiRequestError(
-    value.error || value.message || `请求失败：${response.status}`,
-    response.status,
-    value.code,
-  );
+    throw new ApiRequestError(
+      body.error || body.message || `请求失败：${response.status}`,
+      response.status,
+      body.code,
+    );
   }
-  return value as T;
+  return body as T;
 }
 
-function mergeFields(fields?: Partial<WorkbenchFields>): WorkbenchFields {
-  return { ...EMPTY_FIELDS, ...fields };
+function cloneTemplateBlocks(template: PromptTemplate): PromptBlock[] {
+  return template.blocks.map((block, index) => ({
+    ...block,
+    id: globalThis.crypto?.randomUUID?.() ?? `${template.id}-${Date.now()}-${index}`,
+  }));
 }
 
-function toPromptFields(fields: WorkbenchFields): PromptFields {
+function cleanBlocks(blocks: PromptBlock[]): PromptBlock[] {
+  return normalizeBlockOrder(
+    blocks.filter((block) => block.textZh.trim() || block.textEn.trim()),
+  );
+}
+
+function defaultPhraseItem(phrase: DefaultPhrase): PhraseLibraryItem {
   return {
-    subject: fields.subject,
-    action: fields.action,
-    environment: fields.environment,
-    medium: fields.medium,
-    style: fields.style,
-    composition: fields.composition,
-    camera: fields.camera,
-    lighting: fields.lighting,
-    color: fields.color,
-    material: fields.material,
-    mood: fields.mood,
-    negative: fields.negative,
+    ...phrase,
+    textZh: phrase.name,
+    textEn: phrase.content,
+    source: "default",
   };
 }
 
-function fromStoredFields(fields?: Partial<PromptFields>): WorkbenchFields {
-  return mergeFields({
-    subject: String(fields?.subject ?? ""),
-    action: String(fields?.action ?? ""),
-    environment: String(fields?.environment ?? ""),
-    medium: String(fields?.medium ?? ""),
-    style: String(fields?.style ?? ""),
-    composition: String(fields?.composition ?? ""),
-    camera: String(fields?.camera ?? ""),
-    lighting: String(fields?.lighting ?? ""),
-    color: String(fields?.color ?? ""),
-    material: String(fields?.material ?? ""),
-    mood: String(fields?.mood ?? ""),
-    negative: String(fields?.negative ?? ""),
-  });
+function personalPhraseItem(phrase: PhraseSnippet): PhraseLibraryItem {
+  const chinese = /[\u3400-\u9fff]/.test(phrase.content);
+  return {
+    ...phrase,
+    targetField: "custom",
+    textZh: chinese ? phrase.content : phrase.name,
+    textEn: chinese ? "" : phrase.content,
+    source: "personal",
+  };
 }
 
-function sourceLabel(source: PromptSource): string {
-  return source === "ai" ? "AI 生成" : "规则生成";
+function insertPhraseBlock(
+  blocks: PromptBlock[],
+  phrase: PhraseLibraryItem,
+  field: PromptBlock["field"],
+  index?: number,
+): PromptBlock[] {
+  const target = orderedBlocks(blocks, field);
+  const block = createPromptBlock(
+    field,
+    phrase.textZh,
+    phrase.textEn,
+    "phrase",
+    target.length,
+  );
+  target.splice(Math.min(Math.max(index ?? target.length, 0), target.length), 0, block);
+  return normalizeBlockOrder([
+    ...blocks.filter((item) => item.field !== field),
+    ...target,
+  ]);
 }
 
-function warningText(warning: PromptWarning): string {
-  return warning.field ? `${warning.field}: ${warning.message}` : warning.message;
+function fieldLabel(field: PromptBlock["field"]): string {
+  return PROMPT_FIELD_LABELS[field] ?? "自定义";
 }
 
-function completionPercent(fields: WorkbenchFields): number {
-  const meaningfulFields = FIELD_META.filter((field) => field.key !== "custom");
-  const complete = meaningfulFields.filter((field) => fields[field.key].trim()).length;
-  return Math.round((complete / meaningfulFields.length) * 100);
+function bodyWithNegative(
+  body: string,
+  blocks: PromptBlock[],
+  language: "zh" | "en",
+): string {
+  const negative = negativeValues(blocks, language).join(", ");
+  if (!negative) return body;
+  return `${body}, ${language === "zh" ? "排除" : "exclude"}: ${negative}`;
+}
+
+function snapshotVariant(
+  variant: PromptVariant,
+  baseParameters: PromptParameters,
+  references: PromptReferences,
+  targetSurface: TargetSurface,
+  taskType: TaskType,
+): PromptVariant {
+  const blocks = cleanBlocks(
+    reconcileNegativeBlocks(variant.blocks, baseParameters).blocks,
+  );
+  const bodies = composePromptBodies(blocks);
+  const parameters = parametersWithNegativeBlocks(baseParameters, blocks);
+  const bodyZh = bodies.bodyZh || bodies.bodyEn;
+  const bodyEn = bodies.bodyEn || bodies.bodyZh;
+  return {
+    ...variant,
+    blocks,
+    bodyZh,
+    bodyEn,
+    promptZh: composePromptWithReferences(bodyZh, parameters, references, {
+      targetSurface,
+      taskType,
+    }),
+    promptEn: composePromptWithReferences(bodyEn, parameters, references, {
+      targetSurface,
+      taskType,
+    }),
+  };
 }
 
 export function PromptWorkbench() {
-  const initialTemplate = TEMPLATES[0];
-  const [fields, setFields] = useState<WorkbenchFields>(() => mergeFields(initialTemplate.fields));
-  const [translatedFields, setTranslatedFields] = useState<Partial<PromptFields>>(
-    initialTemplate.translatedFields,
+  const session = authClient.useSession();
+  const authenticated = Boolean(session.data?.user);
+  const initialTemplate = PROMPT_TEMPLATES[0];
+  const [blocks, setBlocks] = useState<PromptBlock[]>(() => cloneTemplateBlocks(initialTemplate));
+  const blocksRef = useRef(blocks);
+  const [parameters, setParameters] = useState<PromptParameters>(() =>
+    stripNegativeParameter(initialTemplate.parameters),
   );
-  const [parameters, setParameters] = useState<PromptParameters>(DEFAULT_PARAMETERS);
-  const [idea, setIdea] = useState("雨夜都市中的电影感人像，冷色霓虹与克制的情绪");
+  const [references, setReferences] = useState<PromptReferences>(EMPTY_PROMPT_REFERENCES);
+  const [targetSurface, setTargetSurface] = useState<TargetSurface>("web");
+  const [taskType, setTaskType] = useState<TaskType>("image");
+  const [idea, setIdea] = useState("雨夜都市中的电影感人像，冷色霓虹与克制情绪");
   const [mode, setMode] = useState<PromptSource>("rule");
-  const [activeTemplate, setActiveTemplate] = useState(initialTemplate.id);
-  const [outputZh, setOutputZh] = useState("");
-  const [outputEn, setOutputEn] = useState("");
-  const [currentDraft, setCurrentDraft] = useState<PromptDraft | null>(null);
+  const [draft, setDraft] = useState<PromptDraft | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<PromptVariantKind>("detailed");
+  const [translationStatuses, setTranslationStatuses] = useState<
+    Record<string, BlockTranslationStatus>
+  >({});
+  const [translationRetryTick, setTranslationRetryTick] = useState(0);
+  const translationFailures = useRef(new Set<string>());
+  const [parserWarnings, setParserWarnings] = useState<PromptWarning[]>([]);
   const [generating, setGenerating] = useState(false);
-  const [copied, setCopied] = useState<"zh" | "en" | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const [connection, setConnection] = useState<ConnectionState>("checking");
+  const [submitting, setSubmitting] = useState(false);
+  const [mobileTab, setMobileTab] = useState<MobileTab>("create");
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>("library");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<DrawerTab>("phrases");
-  const [, setMobileTab] = useState<MobileTab>("create");
+  const [templateChoice, setTemplateChoice] = useState<PromptTemplate | null>(null);
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<number | null>(null);
 
   const [phrases, setPhrases] = useState<PhraseSnippet[]>([]);
-  const [phrasesLoading, setPhrasesLoading] = useState(false);
-  const [phraseSearch, setPhraseSearch] = useState("");
-  const [phraseCategory, setPhraseCategory] = useState("全部");
-  const [phraseEditor, setPhraseEditor] = useState<PhraseForm | null>(null);
-  const [phraseSaving, setPhraseSaving] = useState(false);
-
+  const [phraseTab, setPhraseTab] = useState<"default" | "personal">("default");
+  const [phraseQuery, setPhraseQuery] = useState("");
+  const [phraseCategory, setPhraseCategory] = useState("");
+  const [phraseLimit, setPhraseLimit] = useState(120);
+  const [activeDrag, setActiveDrag] = useState<ActiveDragItem | null>(null);
   const [historyItems, setHistoryItems] = useState<PromptRecord[]>([]);
-  const [historyPage, setHistoryPage] = useState(1);
-  const [historyTotal, setHistoryTotal] = useState(0);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  const [favorites, setFavorites] = useState<PromptRecord[]>([]);
-  const [favoritePage, setFavoritePage] = useState(1);
-  const [favoriteTotal, setFavoriteTotal] = useState(0);
-  const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [favorites, setFavorites] = useState<FavoriteRecord[]>([]);
+  const [folders, setFolders] = useState<FolderRecord[]>([]);
+  const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
+  const [favoriteSearch, setFavoriteSearch] = useState("");
+  const [folderFilter, setFolderFilter] = useState("");
   const [favoriteDialog, setFavoriteDialog] = useState(false);
+  const [favoriteTitle, setFavoriteTitle] = useState("");
   const [favoriteNote, setFavoriteNote] = useState("");
-  const [favoriteSaving, setFavoriteSaving] = useState(false);
-  const [editingFavorite, setEditingFavorite] = useState<{ id: string; note: string } | null>(null);
+  const [favoriteFolder, setFavoriteFolder] = useState("");
+  const [revisionTarget, setRevisionTarget] = useState<FavoriteRecord | null>(null);
+  const [revisions, setRevisions] = useState<RevisionRecord[]>([]);
+  const [privateLoading, setPrivateLoading] = useState(false);
 
-  const [providerConfigs, setProviderConfigs] = useState<PublicConfig[]>([]);
+  const [aiConfigs, setAiConfigs] = useState<PublicConfig[]>([]);
   const [translationConfigs, setTranslationConfigs] = useState<PublicConfig[]>([]);
-  const [midjourneyConfigs, setMidjourneyConfigs] = useState<PublicConfig[]>([]);
-  const [settingsLoading, setSettingsLoading] = useState(false);
-  const [configAction, setConfigAction] = useState<string | null>(null);
-  const [aiForm, setAiForm] = useState<AiConfigForm>(DEFAULT_AI_FORM);
-  const [translationForm, setTranslationForm] =
-    useState<TranslationConfigForm>(DEFAULT_TRANSLATION_FORM);
-  const [midjourneyForm, setMidjourneyForm] =
-    useState<MidjourneyConfigForm>(DEFAULT_MIDJOURNEY_FORM);
-
-  const [submissions, setSubmissions] = useState<MidjourneySubmission[]>([]);
-  const [submissionPage, setSubmissionPage] = useState(1);
-  const [submissionTotal, setSubmissionTotal] = useState(0);
-  const [submissionsLoading, setSubmissionsLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [submissionResult, setSubmissionResult] = useState<SubmissionResponse | null>(null);
-
-  const textareaRefs = useRef<Partial<Record<WorkbenchFieldKey, HTMLTextAreaElement | null>>>({});
-  const lastCaret = useRef<{ key: WorkbenchFieldKey; start: number; end: number } | null>(null);
-  const toastTimer = useRef<number | null>(null);
+  const [pushConfigs, setPushConfigs] = useState<PublicConfig[]>([]);
+  const [siteServices, setSiteServices] = useState<SiteServiceSummary | null>(
+    null,
+  );
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   const notify = useCallback((message: string) => {
     setToast(message);
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2800);
+    toastTimer.current = window.setTimeout(() => setToast(""), 3200);
   }, []);
 
-const markConnection = useCallback((error?: unknown) => {
-  if (error instanceof ApiRequestError && error.status === 401) {
-    setConnection("guest");
-  } else if (error && !(error instanceof ApiRequestError)) {
-    setConnection("offline");
-  } else {
-    setConnection("connected");
-  }
-}, []);
+  const commitBlocks = useCallback((value: BlockUpdater) => {
+    const next =
+      typeof value === "function" ? value(blocksRef.current) : value;
+    blocksRef.current = next;
+    setBlocks(next);
+    setDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        blocks: next,
+        variants: current.variants.map((variant) =>
+          variant.id === selectedVariant
+            ? { ...variant, blocks: next }
+            : variant
+        ),
+      };
+    });
+  }, [selectedVariant]);
 
-  const showError = useCallback(
-    (error: unknown, fallback: string) => {
-      const message = error instanceof Error ? error.message : fallback;
-      notify(message);
-      markConnection(error);
-    },
-    [markConnection, notify],
+  const normalizedBlocks = useMemo(() => cleanBlocks(blocks), [blocks]);
+  const composed = useMemo(() => composePromptBodies(normalizedBlocks), [normalizedBlocks]);
+  const bodyZh = composed.bodyZh || composed.bodyEn;
+  const bodyEn = composed.bodyEn || composed.bodyZh;
+  const readableBodyZh = bodyWithNegative(bodyZh, normalizedBlocks, "zh");
+  const effectiveParameters = useMemo(
+    () =>
+      filterUnsupportedParameters(
+        parametersWithNegativeBlocks(parameters, normalizedBlocks),
+        {
+          targetSurface,
+          taskType,
+        },
+      ),
+    [normalizedBlocks, parameters, targetSurface, taskType],
   );
+  const validation = useMemo(
+    () =>
+      validatePromptConfiguration(effectiveParameters, references, {
+        targetSurface,
+        taskType,
+      }),
+    [effectiveParameters, references, targetSurface, taskType],
+  );
+  const fullZh = useMemo(
+    () =>
+      composePromptWithReferences(bodyZh, effectiveParameters, references, {
+        targetSurface,
+        taskType,
+      }),
+    [bodyZh, effectiveParameters, references, targetSurface, taskType],
+  );
+  const fullEn = useMemo(
+    () =>
+      composePromptWithReferences(bodyEn, effectiveParameters, references, {
+        targetSurface,
+        taskType,
+      }),
+    [bodyEn, effectiveParameters, references, targetSurface, taskType],
+  );
+  const warnings = [...validation.warnings, ...parserWarnings, ...(draft?.warnings ?? [])];
+  const activePushConfig = pushConfigs.find((item) => item.isActive);
+  const phraseItems = useMemo(
+    () =>
+      phraseTab === "default"
+        ? DEFAULT_PHRASES.map(defaultPhraseItem)
+        : phrases.map(personalPhraseItem),
+    [phraseTab, phrases],
+  );
+  const phraseCategories = useMemo(
+    () =>
+      phraseTab === "default"
+        ? [...DEFAULT_PHRASE_CATEGORIES]
+        : [...new Set(phrases.map((item) => item.category))],
+    [phraseTab, phrases],
+  );
+  const visiblePhrases = useMemo(() => {
+    const query = phraseQuery.trim().toLocaleLowerCase();
+    return phraseItems.filter(
+      (item) =>
+        (!phraseCategory || item.category === phraseCategory) &&
+        (!query ||
+          `${item.name} ${item.category} ${item.content}`.toLocaleLowerCase().includes(query)),
+    );
+  }, [phraseCategory, phraseItems, phraseQuery]);
+  const displayedPhrases = visiblePhrases.slice(0, phraseLimit);
 
-  const loadPhrases = useCallback(async () => {
-    setPhrasesLoading(true);
+  const loadPrivateData = useCallback(async () => {
+    if (!authenticated) return;
+    setPrivateLoading(true);
     try {
-      const response = await requestJson<ListResponse<PhraseSnippet>>("/api/phrases");
-      setPhrases(response.items);
-      markConnection();
-    } catch (error) {
-      markConnection(error);
-    } finally {
-      setPhrasesLoading(false);
-    }
-  }, [markConnection]);
-
-  const loadHistory = useCallback(async (page = 1) => {
-    setHistoryLoading(true);
-    try {
-      const response = await requestJson<ListResponse<PromptRecord>>(
-        `/api/history?page=${page}&limit=20`,
-      );
-      setHistoryItems(response.items);
-      setHistoryTotal(response.total ?? response.items.length);
-      setHistoryPage(page);
-      markConnection();
-    } catch (error) {
-      showError(error, "鍘嗗彶璁板綍鍔犺浇澶辫触");
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, [markConnection, showError]);
-
-  const loadFavorites = useCallback(async (page = 1) => {
-    setFavoritesLoading(true);
-    try {
-      const response = await requestJson<ListResponse<PromptRecord>>(
-        `/api/favorites?page=${page}&limit=20`,
-      );
-      setFavorites(response.items);
-      setFavoriteTotal(response.total ?? response.items.length);
-      setFavoritePage(page);
-      markConnection();
-    } catch (error) {
-      showError(error, "鏀惰棌鍔犺浇澶辫触");
-    } finally {
-      setFavoritesLoading(false);
-    }
-  }, [markConnection, showError]);
-
-  const loadConfigs = useCallback(async () => {
-    setSettingsLoading(true);
-    try {
-      const [ai, translation, midjourney] = await Promise.all([
+      const [phraseData, folderData, configA, configT, configM, sharedServices] =
+        await Promise.all([
+        requestJson<ListResponse<PhraseSnippet>>("/api/phrases"),
+        requestJson<{ items: FolderRecord[] }>("/api/folders"),
         requestJson<ListResponse<PublicConfig>>("/api/provider-configs"),
         requestJson<ListResponse<PublicConfig>>("/api/translation-configs"),
         requestJson<ListResponse<PublicConfig>>("/api/midjourney-configs"),
+        requestJson<SiteServiceSummary>("/api/site-services"),
       ]);
-      setProviderConfigs(ai.items);
-      setTranslationConfigs(translation.items);
-      setMidjourneyConfigs(midjourney.items);
-      markConnection();
+      setPhrases(phraseData.items);
+      setFolders(folderData.items);
+      setAiConfigs(configA.items);
+      setTranslationConfigs(configT.items);
+      setPushConfigs(configM.items);
+      setSiteServices(sharedServices);
     } catch (error) {
-      markConnection(error);
-      if (!(error instanceof ApiRequestError && error.status === 401)) {
-        showError(error, "鏈嶅姟閰嶇疆鍔犺浇澶辫触");
+      notify(error instanceof Error ? error.message : "私有数据加载失败。");
+    } finally {
+      setPrivateLoading(false);
+    }
+  }, [authenticated, notify]);
+
+  useEffect(() => {
+    if (!session.isPending && authenticated) {
+      const timer = window.setTimeout(() => void loadPrivateData(), 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [authenticated, loadPrivateData, session.isPending]);
+
+  useEffect(() => {
+    const targets = blocks.reduce<TranslationTarget[]>((items, block) => {
+      if (
+        block.textZh.trim() &&
+        !block.textEn.trim() &&
+        block.textEnMode === "auto"
+      ) {
+        items.push({
+          block,
+          sourceLanguage: "zh",
+          targetLanguage: "en",
+          direction: "zh-en",
+          source: block.textZh,
+        });
+      } else if (!block.textZh.trim() && block.textEn.trim()) {
+        items.push({
+          block,
+          sourceLanguage: "en",
+          targetLanguage: "zh",
+          direction: "en-zh",
+          source: block.textEn,
+        });
       }
-    } finally {
-      setSettingsLoading(false);
-    }
-  }, [markConnection, showError]);
-
-  const loadSubmissions = useCallback(async (page = 1) => {
-    setSubmissionsLoading(true);
-    try {
-      const response = await requestJson<ListResponse<MidjourneySubmission>>(
-        `/api/midjourney-submissions?page=${page}&limit=20`,
+      return items;
+    }, []).filter((target) => {
+      const failureKey = `${target.block.id}:${target.direction}:${target.source}`;
+      return !translationFailures.current.has(failureKey);
+    });
+    if (!authenticated || !targets.length) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setTranslationStatuses((current) => {
+        const next = { ...current };
+        for (const target of targets) {
+          next[target.block.id] = `pending-${target.direction}`;
+        }
+        return next;
+      });
+      const translated = await Promise.all(
+        targets.map(async (target) => {
+          try {
+            const result = await requestJson<{ text: string; translated: boolean; warning?: string }>(
+              "/api/translate",
+              {
+                method: "POST",
+                signal: controller.signal,
+                body: JSON.stringify({
+                  text: target.source,
+                  sourceLanguage: target.sourceLanguage,
+                  targetLanguage: target.targetLanguage,
+                }),
+              },
+            );
+            return { ...target, ...result };
+          } catch {
+            return { ...target, text: "", translated: false };
+          }
+        }),
       );
-      setSubmissions(response.items);
-      setSubmissionTotal(response.total ?? response.items.length);
-      setSubmissionPage(page);
-      markConnection();
-    } catch (error) {
-      showError(error, "鎻愪氦璁板綍鍔犺浇澶辫触");
-    } finally {
-      setSubmissionsLoading(false);
-    }
-  }, [markConnection, showError]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void Promise.all([loadPhrases(), loadConfigs()]);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [loadConfigs, loadPhrases]);
-
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const handleEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setDrawerOpen(false);
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [drawerOpen]);
-
-  useEffect(() => {
+      if (controller.signal.aborted) return;
+      commitBlocks((current) => current.map((block) => {
+        const result = translated.find((item) => item.block.id === block.id);
+        if (!result?.translated) return block;
+        if (
+          result.direction === "zh-en" &&
+          block.textZh === result.source &&
+          !block.textEn &&
+          block.textEnMode === "auto"
+        ) {
+          return { ...block, textEn: result.text, textEnMode: "auto" };
+        }
+        if (
+          result.direction === "en-zh" &&
+          block.textEn === result.source &&
+          !block.textZh
+        ) {
+          return { ...block, textZh: result.text };
+        }
+        return block;
+      }));
+      setTranslationStatuses((current) => {
+        const next = { ...current };
+        for (const result of translated) {
+          if (result.translated) {
+            delete next[result.block.id];
+          } else {
+            next[result.block.id] = `failed-${result.direction}`;
+            translationFailures.current.add(
+              `${result.block.id}:${result.direction}:${result.source}`,
+            );
+          }
+        }
+        return next;
+      });
+    }, 750);
     return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [authenticated, blocks, commitBlocks, translationRetryTick]);
+
+  useEffect(
+    () => () => {
       if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    };
-  }, []);
-
-  const allPhrases = useMemo(() => [...phrases, ...CURATED_PHRASES], [phrases]);
-  const categories = useMemo(
-    () => ["全部", ...Array.from(new Set(phrases.map((phrase) => phrase.category))).filter(Boolean)],
-    [phrases],
+    },
+    [],
   );
-  const visiblePhrases = useMemo(() => {
-    const query = phraseSearch.trim().toLocaleLowerCase();
-    return phrases.filter((phrase) => {
-      const categoryMatches = phraseCategory === "全部" || phrase.category === phraseCategory;
-      const queryMatches =
-        !query ||
-        [phrase.name, phrase.category, phrase.content].some((value) =>
-          value.toLocaleLowerCase().includes(query),
-        );
-      return categoryMatches && queryMatches;
-    });
-  }, [phraseCategory, phraseSearch, phrases]);
 
-  const parameterValidation = useMemo(() => validateParameters(parameters), [parameters]);
-  const parameterString = useMemo(() => serializeParameters(parameters), [parameters]);
-  const activeMidjourneyConfig = midjourneyConfigs.find((config) => config.isActive);
-  const hasOutput = Boolean(outputEn.trim() || outputZh.trim());
-  const progress = completionPercent(fields);
-
-  const selectTemplate = (template: Template) => {
-    setActiveTemplate(template.id);
-    setFields(mergeFields(template.fields));
-    setTranslatedFields(template.translatedFields);
-    setOutputZh("");
-    setOutputEn("");
-    setCurrentDraft(null);
-    setSubmissionResult(null);
-    notify(`已套用模板：${template.title}`);
-  };
-
-  const updateField = (key: WorkbenchFieldKey, value: string) => {
-    setFields((current) => ({ ...current, [key]: value }));
-    if (key !== "custom") {
-      setTranslatedFields((current) => ({ ...current, [key]: undefined }));
-    }
-  };
-
-  const rememberCaret = (key: WorkbenchFieldKey, element: HTMLTextAreaElement) => {
-    lastCaret.current = {
-      key,
-      start: element.selectionStart ?? element.value.length,
-      end: element.selectionEnd ?? element.value.length,
-    };
-  };
-
-  const insertPhrase = (content: string) => {
-    const caret = lastCaret.current;
-    const key = caret?.key ?? "custom";
-    const start = caret?.start ?? fields[key].length;
-    const end = caret?.end ?? start;
-    const existing = fields[key];
-    const prefix = existing.slice(0, start);
-    const suffix = existing.slice(end);
-    const leftSeparator = prefix && !/[\s,，]$/.test(prefix) ? ", " : "";
-    const rightSeparator = suffix && !/^[\s,，]/.test(suffix) ? ", " : "";
-    const nextValue = `${prefix}${leftSeparator}${content}${rightSeparator}${suffix}`;
-    const nextCaret = prefix.length + leftSeparator.length + content.length;
-    updateField(key, nextValue);
-    window.requestAnimationFrame(() => {
-      const element = textareaRefs.current[key];
-      element?.focus();
-      element?.setSelectionRange(nextCaret, nextCaret);
-      lastCaret.current = { key, start: nextCaret, end: nextCaret };
-    });
-    notify(`已插入：${content}`);
-  };
-
-  const openDrawer = (tab: DrawerTab) => {
-    setDrawerTab(tab);
-    setDrawerOpen(true);
-    if (tab === "history") void loadHistory(historyPage);
-    if (tab === "favorites") void loadFavorites(favoritePage);
-    if (tab === "submissions") void loadSubmissions(submissionPage);
-    if (tab === "settings") void loadConfigs();
-  };
-
-  const handleGenerate = async () => {
-    if (!parameterValidation.valid) {
-      notify(parameterValidation.warnings.find((item) => item.severity === "error")?.message ?? "参数校验失败");
+  async function generate() {
+    if (!authenticated) {
+      notify("请先登录，生成结果才能安全保存到你的历史记录。");
       return;
     }
-    if (!Object.values(fields).some((value) => value.trim()) && !idea.trim()) {
-      notify("请先填写创意描述或结构化字段");
+    if (!idea.trim() && !normalizedBlocks.length) {
+      notify("请输入创意或添加词块。");
+      return;
+    }
+    if (!validation.valid) {
+      notify(validation.warnings.find((item) => item.severity === "error")?.message ?? "参数无效。");
       return;
     }
     setGenerating(true);
-    setSubmissionResult(null);
     try {
-      const response = await requestJson<GenerateResponse>("/api/prompts/generate", {
-        method: "POST",
-        body: JSON.stringify({
-          mode,
-          idea,
-          fields: toPromptFields(fields),
-          custom: fields.custom,
-          translatedFields,
-          presetIds: [],
-          parameters,
-        }),
-      });
-      setOutputZh(response.draft.promptZh);
-      setOutputEn(response.draft.promptEn);
-      setCurrentDraft(response.draft);
-      setTranslatedFields(response.draft.translatedFields);
-      markConnection();
-      notify("Prompt 已生成并自动保存到历史");
+      const result = await requestJson<{ draft: PromptDraft; historyId: string }>(
+        "/api/prompts/generate",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            mode,
+            idea,
+            blocks: normalizedBlocks,
+            fields: blocksToFields(normalizedBlocks, "zh"),
+            translatedFields: blocksToFields(normalizedBlocks, "en"),
+            parameters: effectiveParameters,
+            references,
+            targetSurface,
+            taskType,
+          }),
+        },
+      );
+      setDraft(result.draft);
+      chooseVariant("detailed", result.draft);
+      notify(mode === "ai" ? "三个专业版本已生成并写入一条历史。" : "Prompt 已生成并保存历史。");
     } catch (error) {
-      showError(error, "Prompt 生成失败");
+      notify(error instanceof Error ? error.message : "生成失败。");
     } finally {
       setGenerating(false);
     }
-  };
+  }
 
-  const handleIdeaKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      void handleGenerate();
+  function chooseVariant(id: PromptVariantKind, sourceDraft = draft) {
+    const variant = sourceDraft?.variants.find((item) => item.id === id);
+    if (!variant) return;
+    const reconciled = reconcileNegativeBlocks(
+      variant.blocks,
+      stripNegativeParameter(sourceDraft?.parameters ?? parameters),
+    );
+    setSelectedVariant(id);
+    blocksRef.current = reconciled.blocks;
+    setBlocks(reconciled.blocks);
+    setParameters(reconciled.parameters);
+    translationFailures.current.clear();
+    setTranslationStatuses({});
+    setParserWarnings([]);
+  }
+
+  function clearBlockTranslationState(id: string) {
+    for (const key of translationFailures.current) {
+      if (key.startsWith(`${id}:`)) translationFailures.current.delete(key);
     }
-  };
+    setTranslationStatuses((current) => {
+      if (!(id in current)) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
 
-  const copyOutput = async (language: "zh" | "en") => {
-    const value = language === "zh" ? outputZh : outputEn;
-    if (!value.trim()) return;
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(language);
-      window.setTimeout(() => setCopied(null), 1500);
-      notify("已复制到剪贴板");
-    } catch {
-      notify("复制失败，请手动选择文本");
+  function updateToken(id: string, language: "zh" | "en", value: string) {
+    clearBlockTranslationState(id);
+    commitBlocks((current) => {
+      if (language === "zh" && !draft?.bilingualSyncEnabled) {
+        const text = value.trim();
+        return text
+          ? current.map((block) =>
+              block.id === id ? { ...block, textZh: text } : block
+            )
+          : current.filter((block) => block.id !== id);
+      }
+      return updatePromptBlockText(current, id, language, value);
+    });
+  }
+
+  function deleteToken(id: string) {
+    clearBlockTranslationState(id);
+    commitBlocks((current) => current.filter((block) => block.id !== id));
+  }
+
+  function addToken(language: "zh" | "en", rawValue: string) {
+    const referenceResult = extractReferencesFromPrompt(rawValue, references, taskType);
+    const result = extractParametersFromPrompt(referenceResult.body, effectiveParameters, {
+      targetSurface,
+      taskType,
+    });
+    const reconciled = reconcileNegativeBlocks(blocksRef.current, result.parameters);
+    commitBlocks(reconciled.blocks);
+    setParameters(reconciled.parameters);
+    setReferences(referenceResult.references);
+    setParserWarnings([...referenceResult.warnings, ...result.warnings]);
+    const values = splitPromptTokenInput(result.body);
+    if (!values.length) {
+      if (
+        referenceResult.references !== references ||
+        result.parameters !== effectiveParameters
+      ) {
+        notify("图片引用或参数已加入对应面板。");
+      }
+      return;
     }
-  };
+    commitBlocks((current) => appendPromptTokenBlocks(current, language, values));
+    notify(`已新增 ${values.length} 个${language === "zh" ? "中文" : "英文"}词块。`);
+  }
 
-  const buildSnapshot = (): StoredSnapshot | null => {
-    if (!hasOutput) return null;
-    return {
-      promptZh: outputZh,
-      promptEn: outputEn,
-      source: currentDraft?.source ?? mode,
-      input: currentDraft?.fields ?? toPromptFields(fields),
-      fields: currentDraft?.fields ?? toPromptFields(fields),
-      translatedFields: currentDraft?.translatedFields ?? translatedFields,
-      parameters: currentDraft?.parameters ?? parameters,
-      warnings: currentDraft?.warnings ?? parameterValidation.warnings,
-    };
-  };
+  function retryTokenTranslation(id: string, targetLanguage: "zh" | "en") {
+    const direction = targetLanguage === "en" ? "zh-en" : "en-zh";
+    for (const key of translationFailures.current) {
+      if (key.startsWith(`${id}:${direction}:`)) {
+        translationFailures.current.delete(key);
+      }
+    }
+    setTranslationStatuses((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setTranslationRetryTick((current) => current + 1);
+  }
 
-  const saveFavorite = async () => {
-    const snapshot = buildSnapshot();
-    if (!snapshot) return;
-    setFavoriteSaving(true);
-    try {
-      await requestJson<{ item: PromptRecord }>("/api/favorites", {
-        method: "POST",
-        body: JSON.stringify({ snapshot, note: favoriteNote }),
+  function resyncEnglish(id: string) {
+    clearBlockTranslationState(id);
+    commitBlocks((current) => unlockPromptBlockEnglish(current, id));
+    setTranslationRetryTick((current) => current + 1);
+  }
+
+  function replaceNegativeTokens(values: string[]) {
+    const seenValues = new Set<string>();
+    const normalizedValues = values
+      .map((value) => value.trim().replace(/\s+/g, " "))
+      .filter((value) => {
+        const key = value.toLocaleLowerCase();
+        if (!key || seenValues.has(key)) return false;
+        seenValues.add(key);
+        return true;
       });
-      setFavoriteDialog(false);
-      setFavoriteNote("");
-      notify("已收藏，备注可随时修改");
-      if (drawerTab === "favorites") void loadFavorites(1);
-    } catch (error) {
-      showError(error, "收藏失败");
-    } finally {
-      setFavoriteSaving(false);
-    }
-  };
+    const existing = orderedBlocks(blocksRef.current, "negative");
+    const available = new Set(existing.map((block) => block.id));
+    const nextNegative = normalizedValues.map((value, order) => {
+      const exact = existing.find(
+        (block) =>
+          available.has(block.id) &&
+          (block.textEn || block.textZh).trim() === value,
+      );
+      if (exact) {
+        available.delete(exact.id);
+        return { ...exact, order };
+      }
+      const positional = existing.find((block) => available.has(block.id));
+      if (positional) available.delete(positional.id);
+      const chinese = /[\u3400-\u9fff]/.test(value);
+      if (positional) {
+        clearBlockTranslationState(positional.id);
+        return chinese
+          ? {
+              ...positional,
+              order,
+              textZh: value,
+              textEn: "",
+              textEnMode: "auto" as const,
+            }
+          : {
+              ...positional,
+              order,
+              textZh: "",
+              textEn: value,
+              textEnMode: "manual" as const,
+            };
+      }
+      return createPromptBlock(
+        "negative",
+        chinese ? value : "",
+        chinese ? "" : value,
+        "user",
+        order,
+      );
+    });
+    commitBlocks(
+      normalizeBlockOrder([
+        ...blocksRef.current.filter((block) => block.field !== "negative"),
+        ...nextNegative,
+      ]),
+    );
+  }
 
-  const submitToMidjourney = async () => {
-    const snapshot = buildSnapshot();
-    if (!snapshot || !activeMidjourneyConfig) return;
-    setSubmitting(true);
-    setSubmissionResult(null);
+  function applyTemplate(template: PromptTemplate, strategy: "merge" | "replace") {
+    const incoming = cloneTemplateBlocks(template);
+    const templateBlocks =
+      strategy === "replace"
+        ? incoming
+        : normalizeBlockOrder([...blocksRef.current, ...incoming]);
+    const templateParameters =
+      strategy === "replace"
+        ? template.parameters
+        : { ...parameters, ...template.parameters };
+    const reconciled = reconcileNegativeBlocks(
+      templateBlocks,
+      templateParameters,
+    );
+    commitBlocks(reconciled.blocks);
+    setParameters(reconciled.parameters);
+    setDraft(null);
+    translationFailures.current.clear();
+    setTranslationStatuses({});
+    setTemplateChoice(null);
+    notify(`${template.name}已${strategy === "replace" ? "覆盖" : "合并"}到编辑器。`);
+  }
+
+  function addPhrase(phrase: PhraseLibraryItem, field = phrase.targetField, index?: number) {
+    commitBlocks((current) => [
+      ...insertPhraseBlock(current, phrase, field, index),
+    ]);
+    notify(`“${phrase.name}”已加入${fieldLabel(field)}词块。`);
+  }
+
+  function startDrag(event: DragStartEvent) {
+    const data = event.active.data.current;
+    if (data?.type === "phrase") {
+      setActiveDrag({ type: "phrase", phrase: data.phrase as PhraseLibraryItem });
+      return;
+    }
+    if (data?.type === "block") {
+      const block = blocks.find((item) => item.id === String(event.active.id));
+      if (block) setActiveDrag({ type: "block", block });
+    }
+  }
+
+  function finishDrag(event: DragEndEvent) {
+    setActiveDrag(null);
+    if (!event.over) return;
+    const activeData = event.active.data.current;
+    const overData = event.over.data.current;
+    const overId = String(event.over.id);
+    const targetField =
+      (overData?.field as PromptBlock["field"] | undefined) ??
+      (overId.startsWith("group-")
+        ? (overId.slice(6) as PromptBlock["field"])
+        : undefined);
+    if (!targetField) return;
+
+    const overBlock = blocks.find((block) => block.id === overId);
+
+    if (activeData?.type === "phrase") {
+      const targetIndex = overBlock
+        ? orderedBlocks(blocks, targetField).findIndex((block) => block.id === overBlock.id)
+        : orderedBlocks(blocks, targetField).length;
+      addPhrase(activeData.phrase as PhraseLibraryItem, targetField, Math.max(0, targetIndex));
+      return;
+    }
+    if (activeData?.type === "block") {
+      const activeId = String(event.active.id);
+      if (activeId === overId) return;
+      const remaining = blocks.filter((block) => block.id !== activeId);
+      const targetIndex = overBlock
+        ? orderedBlocks(remaining, targetField).findIndex((block) => block.id === overBlock.id)
+        : orderedBlocks(remaining, targetField).length;
+      commitBlocks(
+        movePromptBlock(
+          blocksRef.current,
+          activeId,
+          targetField,
+          Math.max(0, targetIndex),
+        ),
+      );
+    }
+  }
+
+  function currentSnapshot(): PromptSnapshot | null {
+    if (!fullEn.trim() && !fullZh.trim()) return null;
+    const currentVariant: PromptVariant = {
+      id: selectedVariant,
+      label: VARIANT_LABELS[selectedVariant],
+      blocks: normalizedBlocks,
+      bodyZh,
+      bodyEn,
+      promptZh: fullZh,
+      promptEn: fullEn,
+    };
+    const variants = draft?.variants?.length
+      ? draft.variants.map((variant) =>
+          variant.id === selectedVariant
+            ? currentVariant
+            : snapshotVariant(variant, parameters, references, targetSurface, taskType),
+        )
+      : [currentVariant];
+    return PromptSnapshotV4Schema.parse({
+      schemaVersion: 4,
+      input: blocksToFields(normalizedBlocks, "zh"),
+      variants,
+      selectedVariant,
+      blocks: normalizedBlocks,
+      targetSurface,
+      taskType,
+      bodyZh,
+      bodyEn,
+      promptZh: fullZh,
+      promptEn: fullEn,
+      fields: blocksToFields(normalizedBlocks, "zh"),
+      translatedFields: blocksToFields(normalizedBlocks, "en"),
+      parameters: effectiveParameters,
+      references,
+      warnings,
+      source: draft?.source ?? mode,
+      bilingualSyncEnabled: draft?.bilingualSyncEnabled ?? false,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  function restoreSnapshot(value: unknown) {
+    const parsed = PromptSnapshotSchema.safeParse(value);
+    if (!parsed.success) {
+      notify("该记录无法解析，可能已损坏。");
+      return;
+    }
+    const snapshot = parsed.data;
+    const reconciled = reconcileNegativeBlocks(snapshot.blocks, snapshot.parameters);
+    const restoredVariants = snapshot.variants.map((variant) => ({
+      ...variant,
+      blocks: reconcileNegativeBlocks(variant.blocks, {}).blocks,
+    }));
+    blocksRef.current = reconciled.blocks;
+    setBlocks(reconciled.blocks);
+    setParameters(reconciled.parameters);
+    setReferences(snapshot.references);
+    setTargetSurface(snapshot.targetSurface);
+    setTaskType(snapshot.taskType);
+    setSelectedVariant(snapshot.selectedVariant);
+    setMode(snapshot.source);
+    setDraft({
+      schemaVersion: 4,
+      variants: restoredVariants,
+      selectedVariant: snapshot.selectedVariant,
+      blocks: reconciled.blocks,
+      bilingualSyncEnabled: snapshot.bilingualSyncEnabled,
+      targetSurface: snapshot.targetSurface,
+      taskType: snapshot.taskType,
+      bodyZh: snapshot.bodyZh,
+      bodyEn: snapshot.bodyEn,
+      promptZh: snapshot.promptZh,
+      promptEn: snapshot.promptEn,
+      fields: snapshot.fields,
+      translatedFields: snapshot.translatedFields,
+      parameters: reconciled.parameters,
+      references: snapshot.references,
+      warnings: snapshot.warnings,
+      source: snapshot.source,
+    });
+    translationFailures.current.clear();
+    setTranslationStatuses({});
+    setDrawerOpen(false);
+    notify("已恢复到编辑器；旧修订本身未被修改。");
+  }
+
+  async function copy(value: string, label: string) {
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    notify(`${label}已复制。`);
+  }
+
+  async function saveFavorite() {
+    const snapshot = currentSnapshot();
+    if (!snapshot) return notify("当前没有可收藏的 Prompt。");
     try {
-      const response = await requestJson<SubmissionResponse>("/api/midjourney-submissions", {
+      await requestJson("/api/favorites", {
         method: "POST",
         body: JSON.stringify({
-          promptZh: outputZh,
-          promptEn: outputEn,
-          source: snapshot.source,
-          snapshot: {
+          snapshot,
+          title: favoriteTitle || undefined,
+          note: favoriteNote,
+          folderId: favoriteFolder || null,
+        }),
+      });
+      setFavoriteDialog(false);
+      notify("作品已收藏，并创建 revision 1。");
+      await loadLibrary();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "收藏失败。");
+    }
+  }
+
+  async function saveRevision(favorite: FavoriteRecord) {
+    const snapshot = currentSnapshot();
+    if (!snapshot) return notify("当前没有可保存的 Prompt。");
+    try {
+      await requestJson(`/api/favorites/${favorite.id}/revisions`, {
+        method: "POST",
+        body: JSON.stringify({ snapshot }),
+      });
+      notify(`已为“${favorite.title}”保存新修订。`);
+      await loadLibrary();
+      await loadRevisions(favorite);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "修订保存失败。");
+    }
+  }
+
+  async function loadHistory() {
+    if (!authenticated) return;
+    try {
+      const result = await requestJson<ListResponse<PromptRecord>>("/api/history?limit=100");
+      setHistoryItems(result.items);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "历史加载失败。");
+    }
+  }
+
+  const loadLibrary = useCallback(async () => {
+    if (!authenticated) return;
+    try {
+      const query = new URLSearchParams({ limit: "100" });
+      if (favoriteSearch) query.set("search", favoriteSearch);
+      if (folderFilter) query.set("folder", folderFilter);
+      const [favoriteData, folderData] = await Promise.all([
+        requestJson<ListResponse<FavoriteRecord>>(`/api/favorites?${query}`),
+        requestJson<{ items: FolderRecord[] }>("/api/folders"),
+      ]);
+      setFavorites(favoriteData.items);
+      setFolders(folderData.items);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "作品库加载失败。");
+    }
+  }, [authenticated, favoriteSearch, folderFilter, notify]);
+
+  async function loadSubmissions() {
+    if (!authenticated) return;
+    try {
+      const result = await requestJson<ListResponse<SubmissionRecord>>(
+        "/api/midjourney-submissions?limit=50",
+      );
+      setSubmissions(result.items);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "推送记录加载失败。");
+    }
+  }
+
+  async function loadRevisions(favorite: FavoriteRecord) {
+    try {
+      const result = await requestJson<{ revisions: RevisionRecord[] }>(
+        `/api/favorites/${favorite.id}/revisions`,
+      );
+      setRevisionTarget(favorite);
+      setRevisions(result.revisions);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "修订加载失败。");
+    }
+  }
+
+  function openDrawer(tab: DrawerTab) {
+    setDrawerTab(tab);
+    setDrawerOpen(true);
+    if (tab === "history") void loadHistory();
+    if (tab === "library") void loadLibrary();
+    if (tab === "submissions") void loadSubmissions();
+  }
+
+  async function pushPrompt() {
+    const snapshot = currentSnapshot();
+    if (!snapshot) return notify("请先生成 Prompt。");
+    if (!activePushConfig) return notify("请先在设置中启用一个推送入口。");
+    setSubmitting(true);
+    try {
+      const result = await requestJson<{ submissionId: string; status: string; details: string }>(
+        "/api/midjourney-submissions",
+        {
+          method: "POST",
+          body: JSON.stringify({
             promptZh: snapshot.promptZh,
             promptEn: snapshot.promptEn,
             source: snapshot.source,
-            fields: snapshot.fields,
-            parameters: snapshot.parameters,
-            warnings: snapshot.warnings,
-          },
-        }),
-      });
-      setSubmissionResult(response);
-      notify(`已投递到配置入口（仅推送）：${response.status}`);
-      if (drawerTab === "submissions") void loadSubmissions(1);
+            snapshot,
+          }),
+        },
+      );
+      notify(`已投递（仅文本推送）：${result.details}`);
     } catch (error) {
-      showError(error, "推送失败");
+      notify(error instanceof Error ? error.message : "推送失败。");
     } finally {
       setSubmitting(false);
     }
-  };
+  }
 
-  const savePhrase = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!phraseEditor) return;
-    setPhraseSaving(true);
-    try {
-      const path = phraseEditor.id ? `/api/phrases/${phraseEditor.id}` : "/api/phrases";
-      await requestJson<{ item: PhraseSnippet }>(path, {
-        method: phraseEditor.id ? "PATCH" : "POST",
-        body: JSON.stringify({
-          name: phraseEditor.name,
-          category: phraseEditor.category,
-          content: phraseEditor.content,
-          sortOrder: phraseEditor.sortOrder,
-        }),
-      });
-      setPhraseEditor(null);
-      await loadPhrases();
-      notify(phraseEditor.id ? "常用词已更新" : "常用词已保存");
-    } catch (error) {
-      showError(error, "常用词保存失败");
-    } finally {
-      setPhraseSaving(false);
+  async function exportItems(
+    format: "txt" | "markdown" | "json",
+    payload: Record<string, unknown>,
+  ) {
+    const response = await fetch("/api/exports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format, ...payload }),
+    });
+    if (!response.ok) {
+      const error = (await response.json().catch(() => ({}))) as ApiFailure;
+      notify(error.error ?? "导出失败。");
+      return;
     }
-  };
-
-  const deletePhrase = async (id: string) => {
-    try {
-      await requestJson<{ success: boolean }>(`/api/phrases/${id}`, { method: "DELETE" });
-      setPhrases((items) => items.filter((item) => item.id !== id));
-      notify("常用词已删除");
-    } catch (error) {
-      showError(error, "用户词条删除失败");
-    }
-  };
-
-  const restoreRecord = (record: PromptRecord) => {
-    const snapshot = record.snapshot ?? record;
-    const storedFields = snapshot.input ?? snapshot.fields;
-    setFields(fromStoredFields(storedFields));
-    setTranslatedFields(snapshot.translatedFields ?? {});
-    setParameters({ ...DEFAULT_PARAMETERS, ...(snapshot.parameters ?? {}) });
-    setOutputZh(snapshot.promptZh || record.promptZh);
-    setOutputEn(snapshot.promptEn || record.promptEn);
-    setMode(snapshot.source || record.source);
-    setCurrentDraft(null);
-    setDrawerOpen(false);
-    setMobileTab("create");
-    setSubmissionResult(null);
-    notify("提示已恢复到编辑器");
-  };
-
-  const deleteHistory = async (id: string) => {
-    try {
-      await requestJson<{ success: boolean }>(`/api/history/${id}`, { method: "DELETE" });
-      await loadHistory(historyPage);
-      notify("已删除历史记录");
-    } catch (error) {
-      showError(error, "鍒犻櫎鍘嗗彶璁板綍澶辫触");
-    }
-  };
-
-  const clearHistory = async () => {
-    try {
-      await requestJson<{ success: boolean }>("/api/history", { method: "DELETE" });
-      setHistoryItems([]);
-      setHistoryTotal(0);
-      setHistoryPage(1);
-      notify("已清空历史记录");
-    } catch (error) {
-      showError(error, "娓呯┖鍘嗗彶璁板綍澶辫触");
-    }
-  };
-
-  const deleteFavorite = async (id: string) => {
-    try {
-      await requestJson<{ success: boolean }>(`/api/favorites/${id}`, { method: "DELETE" });
-      await loadFavorites(favoritePage);
-      notify("已移除收藏");
-    } catch (error) {
-      showError(error, "鍙栨秷鏀惰棌澶辫触");
-    }
-  };
-
-  const updateFavoriteNote = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!editingFavorite) return;
-    try {
-      await requestJson<{ item: PromptRecord }>(`/api/favorites/${editingFavorite.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ note: editingFavorite.note }),
-      });
-      setEditingFavorite(null);
-      await loadFavorites(favoritePage);
-      notify("收藏备注已更新");
-    } catch (error) {
-      showError(error, "澶囨敞鏇存柊澶辫触");
-    }
-  };
-
-  const saveAiConfig = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setConfigAction("save-ai");
-    try {
-      await requestJson<{ item: PublicConfig }>("/api/provider-configs", {
-        method: "POST",
-        body: JSON.stringify({
-          label: aiForm.label,
-          provider: aiForm.provider,
-          model: aiForm.model,
-          ...(aiForm.endpoint ? { endpoint: aiForm.endpoint } : {}),
-          apiKey: aiForm.apiKey,
-          isActive: aiForm.isActive,
-        }),
-      });
-      setAiForm(DEFAULT_AI_FORM);
-      await loadConfigs();
-      notify("AI 模型配置已保存");
-    } catch (error) {
-      showError(error, "AI 妯″瀷閰嶇疆淇濆瓨澶辫触");
-    } finally {
-      setConfigAction(null);
-    }
-  };
-
-  const saveTranslationConfig = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setConfigAction("save-translation");
-    try {
-      await requestJson<{ item: PublicConfig }>("/api/translation-configs", {
-        method: "POST",
-        body: JSON.stringify({
-          label: translationForm.label,
-          provider: translationForm.provider,
-          ...(translationForm.endpoint ? { endpoint: translationForm.endpoint } : {}),
-          apiKey: translationForm.apiKey,
-          isActive: translationForm.isActive,
-        }),
-      });
-      setTranslationForm(DEFAULT_TRANSLATION_FORM);
-      await loadConfigs();
-      notify("翻译服务配置已保存");
-    } catch (error) {
-      showError(error, "缈昏瘧閰嶇疆淇濆瓨澶辫触");
-    } finally {
-      setConfigAction(null);
-    }
-  };
-
-  const saveMidjourneyConfig = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setConfigAction("save-midjourney");
-    try {
-      await requestJson<{ item: PublicConfig }>("/api/midjourney-configs", {
-        method: "POST",
-        body: JSON.stringify(midjourneyForm),
-      });
-      setMidjourneyForm(DEFAULT_MIDJOURNEY_FORM);
-      await loadConfigs();
-      notify("Midjourney 推送配置已保存");
-    } catch (error) {
-      showError(error, "Midjourney 閰嶇疆淇濆瓨澶辫触");
-    } finally {
-      setConfigAction(null);
-    }
-  };
-
-  const configBasePath = (kind: "ai" | "translation" | "midjourney") => {
-    if (kind === "ai") return "/api/provider-configs";
-    if (kind === "translation") return "/api/translation-configs";
-    return "/api/midjourney-configs";
-  };
-
-  const activateConfig = async (
-    kind: "ai" | "translation" | "midjourney",
-    id: string,
-  ) => {
-    setConfigAction(`activate-${id}`);
-    try {
-      await requestJson<{ item: PublicConfig }>(`${configBasePath(kind)}/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ isActive: true }),
-      });
-      await loadConfigs();
-      notify("配置已启用");
-    } catch (error) {
-      showError(error, "鍚敤閰嶇疆澶辫触");
-    } finally {
-      setConfigAction(null);
-    }
-  };
-
-  const testConfig = async (
-    kind: "ai" | "translation" | "midjourney",
-    id: string,
-  ) => {
-    setConfigAction(`test-${id}`);
-    try {
-      await requestJson<{ success: boolean; message?: string; details?: string }>(
-        `${configBasePath(kind)}/test`,
-        {
-          method: "POST",
-          body: JSON.stringify({ id }),
-        },
-      );
-      notify(kind === "midjourney" ? "测试消息已发送（仅推送）" : "连接测试成功");
-    } catch (error) {
-      showError(error, "连接测试失败");
-    } finally {
-      setConfigAction(null);
-    }
-  };
-
-  const deleteConfig = async (
-    kind: "ai" | "translation" | "midjourney",
-    id: string,
-  ) => {
-    setConfigAction(`delete-${id}`);
-    try {
-      await requestJson<{ success: boolean }>(`${configBasePath(kind)}/${id}`, {
-        method: "DELETE",
-      });
-      await loadConfigs();
-      notify("配置已删除");
-    } catch (error) {
-      showError(error, "删除配置失败");
-    } finally {
-      setConfigAction(null);
-    }
-  };
-
-  const renderConfigs = (
-    kind: "ai" | "translation" | "midjourney",
-    configs: PublicConfig[],
-  ) => (
-    <div className="service-config-list">
-      {configs.length ? configs.map((config) => (
-        <article key={config.id}>
-          <span className={config.isActive ? "is-active" : ""}>
-            {config.isActive ? <Check size={12} /> : <KeyRound size={12} />}
-          </span>
-          <div>
-            <strong>{config.label}{config.isActive ? "（当前启用）" : ""}</strong>
-            <small>{config.provider}{config.model ? ` · ${config.model}` : ""} · {config.apiKeyMasked || "无需密钥"}</small>
-          </div>
-          <div>
-            {!config.isActive ? (
-              <button type="button" disabled={Boolean(configAction)} onClick={() => void activateConfig(kind, config.id)}>启用</button>
-            ) : null}
-            <button type="button" disabled={Boolean(configAction)} onClick={() => void testConfig(kind, config.id)}>
-              {configAction === `test-${config.id}` ? <LoaderCircle className="spin" size={12} /> : <RefreshCw size={12} />}
-            </button>
-            <button type="button" disabled={Boolean(configAction)} onClick={() => void deleteConfig(kind, config.id)}>
-              <Trash2 size={12} />
-            </button>
-          </div>
-        </article>
-      )) : <p className="config-empty">尚未保存配置</p>}
-    </div>
-  );
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `prompts.${format}`;
+    const url = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    notify("导出文件已生成。");
+  }
 
   return (
-    <main className="workbench-shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark"><WandSparkles size={18} /></span>
-          <span><strong>Prompt Craft</strong><small>Midjourney 创作工作台</small></span>
+    <main className="v2-shell">
+      <header className="v2-topbar">
+        <button className="v2-brand" type="button" onClick={() => setMobileTab("create")}>
+          <span><WandSparkles size={19} /></span>
+          <div><strong>Prompt Craft</strong><small>Midjourney 工作台 · V8.2</small></div>
+        </button>
+        <div className="v2-top-status">
+          <i className={authenticated ? "online" : ""} />
+          {session.isPending ? "检查会话…" : authenticated ? session.data?.user.email : "访客模式"}
         </div>
-        <div className="topbar-actions">
-          <span className={`connection-pill is-${connection}`}>
-            {connection === "connected" ? "服务已连接" : connection === "guest" ? "未登录" : connection === "offline" ? "网络不可用" : "连接检查中"}
-          </span>
-          {connection === "guest" ? <Link href="/signin">登录</Link> : null}
-          <button type="button" onClick={() => openDrawer("phrases")}><Library size={15} /> 资料库</button>
-          <button type="button" onClick={() => openDrawer("settings")}><Settings2 size={15} /> 配置</button>
-        </div>
+        <nav className="v2-top-actions">
+          <button type="button" onClick={() => openDrawer("history")}><History size={16} />历史</button>
+          <button type="button" onClick={() => openDrawer("library")}><Library size={16} />作品库</button>
+          <button type="button" onClick={() => openDrawer("settings")}><Settings2 size={16} />设置</button>
+          {authenticated ? (
+            <button
+              type="button"
+              title="退出登录"
+              onClick={() => void authClient.signOut().then(() => window.location.reload())}
+            ><LogOut size={16} /></button>
+          ) : (
+            <Link href="/signin">登录</Link>
+          )}
+        </nav>
       </header>
 
-      <section className="workspace-grid">
-        <aside className="left-panel panel-scroll">
-          <div className="panel-heading"><div><span className="section-kicker">TEMPLATES</span><h2>创作模板</h2></div></div>
-          <div className="template-list">
-            {TEMPLATES.map((template) => (
-              <button className={`template-card ${activeTemplate === template.id ? "is-active" : ""}`} key={template.id} type="button" onClick={() => selectTemplate(template)}>
-                <span>{template.eyebrow}</span><strong>{template.title}</strong><small>{template.accent}</small>
+      <DndContext
+        id="prompt-workbench-dnd"
+        sensors={sensors}
+        collisionDetection={WORKBENCH_COLLISION_DETECTION}
+        autoScroll={false}
+        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+        onDragStart={startDrag}
+        onDragEnd={finishDrag}
+        onDragCancel={() => setActiveDrag(null)}
+      >
+      <div className="v2-grid" data-mobile-tab={mobileTab}>
+        <aside className="v2-panel v2-materials">
+          <div className="v2-panel-title v2-phrases-title">
+            <div><span>PHRASES</span><h2>常用词</h2></div>
+            {authenticated && (
+              <button type="button" aria-label="管理常用词" onClick={() => openDrawer("phrases")}>
+                <Plus size={14} />
               </button>
-            ))}
+            )}
           </div>
-          <div className="panel-heading"><div><span className="section-kicker">QUICK PHRASES</span><h2>常用词语</h2></div></div>
-          <div className="quick-phrase-list">
-            {allPhrases.slice(0, 16).map((phrase) => (
-              <button key={phrase.id} type="button" onClick={() => insertPhrase(phrase.content)} title={phrase.content}>
-                <Plus size={11} /> {phrase.name}
-              </button>
-            ))}
+          <div className="v2-phrase-tabs" role="tablist" aria-label="常用词来源">
+            <button
+              type="button"
+              role="tab"
+              className={phraseTab === "default" ? "active" : ""}
+              aria-selected={phraseTab === "default"}
+              onClick={() => {
+                setPhraseTab("default");
+                setPhraseCategory("");
+                setPhraseLimit(120);
+              }}
+            >
+              默认词库
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={phraseTab === "personal" ? "active" : ""}
+              aria-selected={phraseTab === "personal"}
+              onClick={() => {
+                setPhraseTab("personal");
+                setPhraseCategory("");
+                setPhraseLimit(120);
+              }}
+            >
+              我的常用词
+            </button>
           </div>
-          <button className="secondary-button" type="button" onClick={() => openDrawer("phrases")}>管理常用词</button>
-        </aside>
-
-        <section className="center-panel panel-scroll">
-          <div className="workbench-intro">
-            <div><span className="section-kicker">PROMPT WORKBENCH</span><h1>把灵感整理成可复用的 Prompt</h1></div>
-            <div className="mode-switch">
-              <button className={mode === "rule" ? "is-active" : ""} type="button" onClick={() => setMode("rule")}>规则模式</button>
-              <button className={mode === "ai" ? "is-active" : ""} type="button" onClick={() => setMode("ai")}>AI 模式</button>
-            </div>
-          </div>
-          <section className="idea-card">
-            <label htmlFor="idea">创意描述</label>
-            <textarea id="idea" value={idea} onChange={(event) => setIdea(event.target.value)} onKeyDown={handleIdeaKeyDown} maxLength={4000} placeholder="例如：雨夜都市中的电影感人像，冷色霓虹与克制的情绪" />
-            <div className="idea-footer">
-              <span><kbd>Ctrl</kbd> + <kbd>Enter</kbd> 快速生成</span>
-              <button className="generate-button" type="button" disabled={generating} onClick={() => void handleGenerate()}>
-                {generating ? <LoaderCircle className="spin" size={14} /> : <WandSparkles size={14} />}
-                {generating ? "正在生成..." : mode === "ai" ? "AI 生成" : "生成 Prompt"}
-              </button>
-            </div>
-          </section>
-
-          <div className="editor-heading">
-            <div><span className="section-kicker">STRUCTURE</span><h2>结构化编辑</h2></div>
-            <span>{progress}%</span>
-          </div>
-          <div className="field-grid">
-            {FIELD_META.map((meta) => (
-              <label className={`field-card ${meta.wide ? "is-wide" : ""}`} key={meta.key}>
-                <span className="field-label">{meta.label}<small>{meta.hint}</small></span>
-                <textarea
-                  ref={(element) => { textareaRefs.current[meta.key] = element; }}
-                  value={fields[meta.key]}
-                  maxLength={4000}
-                  onChange={(event) => updateField(meta.key, event.target.value)}
-                  onFocus={(event) => rememberCaret(meta.key, event.currentTarget)}
-                  onSelect={(event) => rememberCaret(meta.key, event.currentTarget)}
-                  placeholder={meta.hint}
-                />
-              </label>
-            ))}
-          </div>
-
-          <section className="result-section">
-            <div className="result-heading"><div><span className="section-kicker">OUTPUT</span><h2>生成结果</h2></div></div>
-            {currentDraft?.warnings.length ? <div className="inline-notice"><CircleAlert size={14} /><span>{currentDraft.warnings.map(warningText).join("；")}</span></div> : null}
-            <div className="result-grid">
-              <article className="result-card">
-                <header className="result-card-head"><span>中文描述 <small>ZH</small></span><button type="button" disabled={!outputZh} onClick={() => void copyOutput("zh")}>{copied === "zh" ? <Check size={11} /> : <Copy size={11} />} 复制</button></header>
-                <textarea value={outputZh} maxLength={48000} onChange={(event) => setOutputZh(event.target.value)} placeholder="生成后显示中文描述" />
-              </article>
-              <article className="result-card is-primary">
-                <header className="result-card-head"><span>English Prompt <small>MJ</small></span><button type="button" disabled={!outputEn} onClick={() => void copyOutput("en")}>{copied === "en" ? <Check size={11} /> : <Copy size={11} />} 复制</button></header>
-                <textarea value={outputEn} maxLength={48000} onChange={(event) => setOutputEn(event.target.value)} placeholder="Generated English prompt appears here" />
-              </article>
-            </div>
-            <div className="result-actions">
-              <button className="secondary-button" type="button" disabled={!hasOutput} onClick={() => setFavoriteDialog(true)}><Heart size={14} /> 收藏并备注</button>
-              <button className="primary-copy-button submit-midjourney-button" type="button" disabled={!hasOutput || !activeMidjourneyConfig || submitting} onClick={() => void submitToMidjourney()}>
-                {submitting ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}
-                {submitting ? "发送中..." : "发送到配置入口"}
-              </button>
-            </div>
-            <p className="submission-hint">
-              该功能只向 Discord Webhook 或自定义 HTTP 入口推送文本，不代表官方 Midjourney 任务已创建，也不返回图片生成进度。
-            </p>
-            {!activeMidjourneyConfig ? <button className="submission-hint" type="button" onClick={() => openDrawer("settings")}>请先启用一个推送配置</button> : null}
-            {submissionResult ? <div className={`submission-state is-${submissionResult.status}`}><Check size={13} /><span>已投递（仅推送）：{submissionResult.status} / 记录 ID：{submissionResult.submissionId}</span></div> : null}
-          </section>
-        </section>
-
-        <aside className="right-panel panel-scroll">
-          <div className="parameter-header"><div><span className="section-kicker">MIDJOURNEY</span><h2>生成参数</h2></div><SlidersHorizontal size={16} /></div>
-          <label className="parameter-group"><span className="field-label">模型版本</span>
-            <select value={parameters.model} onChange={(event) => setParameters((current) => ({ ...current, model: event.target.value as PromptParameters["model"] }))}>
-              {MIDJOURNEY_MODELS.map((model) => <option key={model} value={model}>{model}</option>)}
+          <div className="v2-phrase-filters">
+            <input
+              value={phraseQuery}
+              onChange={(event) => {
+                setPhraseQuery(event.target.value);
+                setPhraseLimit(120);
+              }}
+              placeholder="搜索中文名称或英文词语"
+              aria-label="搜索常用词"
+            />
+            <select
+              value={phraseCategory}
+              onChange={(event) => {
+                setPhraseCategory(event.target.value);
+                setPhraseLimit(120);
+              }}
+              aria-label="常用词分类"
+            >
+              <option value="">全部分类</option>
+              {phraseCategories.map((category) => <option key={category}>{category}</option>)}
             </select>
-          </label>
-          <label className="parameter-group"><span className="field-label">画面比例</span><input value={parameters.aspectRatio ?? ""} onChange={(event) => setParameters((current) => ({ ...current, aspectRatio: event.target.value }))} placeholder="16:9" /></label>
-          <label className="parameter-group"><span><span className="field-label">Stylize</span><output>{parameters.stylize ?? 0}</output></span><input type="range" min="0" max="1000" value={parameters.stylize ?? 0} onChange={(event) => setParameters((current) => ({ ...current, stylize: Number(event.target.value) }))} /></label>
-          <label className="parameter-group"><span><span className="field-label">Chaos</span><output>{parameters.chaos ?? 0}</output></span><input type="range" min="0" max="100" value={parameters.chaos ?? 0} onChange={(event) => setParameters((current) => ({ ...current, chaos: Number(event.target.value) }))} /></label>
-          <label className="parameter-group"><span><span className="field-label">Weird</span><output>{parameters.weird ?? 0}</output></span><input type="range" min="0" max="3000" value={parameters.weird ?? 0} onChange={(event) => setParameters((current) => ({ ...current, weird: Number(event.target.value) }))} /></label>
-          <label className="parameter-group"><span className="field-label">Quality</span><select value={parameters.quality ?? 1} onChange={(event) => setParameters((current) => ({ ...current, quality: Number(event.target.value) }))}><option value="0.25">0.25</option><option value="0.5">0.5</option><option value="1">1</option><option value="2">2</option><option value="4">4</option></select></label>
-          <label className="parameter-group"><span className="field-label">Seed</span><input type="number" min="0" max="4294967295" value={parameters.seed ?? ""} onChange={(event) => setParameters((current) => ({ ...current, seed: event.target.value ? Number(event.target.value) : undefined }))} /></label>
-          <label className="toggle-row"><input type="checkbox" checked={Boolean(parameters.raw)} onChange={(event) => setParameters((current) => ({ ...current, raw: event.target.checked }))} /><span><strong>Raw</strong><small>减少默认风格干预</small></span></label>
-          <label className="toggle-row"><input type="checkbox" checked={Boolean(parameters.tile)} onChange={(event) => setParameters((current) => ({ ...current, tile: event.target.checked }))} /><span><strong>Tile</strong><small>生成无缝平铺纹理</small></span></label>
-          <label className="parameter-group"><span className="field-label">No / 额外排除</span><input value={(parameters.no ?? []).join(", ")} onChange={(event) => setParameters((current) => ({ ...current, no: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} /></label>
-          <div className="parameter-preview"><span>参数预览</span><code>{parameterString || "暂无参数"}</code></div>
-          {parameterValidation.warnings.map((warning) => <p className={warning.severity === "error" ? "is-error" : ""} key={`${warning.code}-${warning.field ?? ""}`}>{warning.message}</p>)}
+          </div>
+          <div className="v2-quick-phrases">
+            {displayedPhrases.map((phrase) => (
+              <DraggablePhrase key={`${phrase.source}-${phrase.id}`} phrase={phrase} onUse={addPhrase} />
+            ))}
+            {!visiblePhrases.length && (
+              <p>
+                {phraseTab === "personal"
+                  ? authenticated
+                    ? "还没有匹配的个人常用词，可点击右上角加号创建。"
+                    : "登录后可保存并拖动个人常用词。"
+                  : "没有匹配的默认词条。"}
+              </p>
+            )}
+            {displayedPhrases.length < visiblePhrases.length && (
+              <button
+                type="button"
+                className="v2-load-more-phrases"
+                onClick={() => setPhraseLimit((current) => current + 120)}
+              >
+                显示更多（剩余 {visiblePhrases.length - displayedPhrases.length} 条）
+              </button>
+            )}
+          </div>
+          <div className="v2-materials-divider" />
+          <div className="v2-panel-title v2-templates-title">
+            <div><span>TEMPLATES</span><h2>场景模板</h2></div>
+            <small>{PROMPT_TEMPLATES.length} 类</small>
+          </div>
+          <div className="v2-template-list">
+            {PROMPT_TEMPLATES.map((template, index) => (
+              <button key={template.id} type="button" onClick={() => setTemplateChoice(template)}>
+                <b>{String(index + 1).padStart(2, "0")}</b>
+                <span><strong>{template.name}</strong><small>{template.description}</small></span>
+                <ChevronRight size={15} />
+              </button>
+            ))}
+          </div>
         </aside>
-      </section>
 
-      {drawerOpen ? (
-        <div className="drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDrawerOpen(false); }}>
-          <section className="library-drawer">
-            <header><div><span className="section-kicker">PERSONAL LIBRARY</span><h2>个人创作资料库</h2></div><button type="button" onClick={() => setDrawerOpen(false)}><X size={18} /></button></header>
-            <nav className="drawer-tabs">
-              {(["phrases", "history", "favorites", "submissions", "settings"] as DrawerTab[]).map((tab) => (
-                <button className={drawerTab === tab ? "is-active" : ""} key={tab} type="button" onClick={() => openDrawer(tab)}>
-                  {tab === "phrases" ? "常用词" : tab === "history" ? "历史" : tab === "favorites" ? "收藏" : tab === "submissions" ? "推送记录" : "服务配置"}
+        <section className="v2-creation">
+          <div className="v2-prompt-card" aria-label="Prompt 创作与双语编辑">
+            <div className="v2-prompt-toolbar">
+              <div className="v2-mode-switch" role="group" aria-label="生成模式">
+                <button className={mode === "rule" ? "active" : ""} onClick={() => setMode("rule")} type="button">
+                  结构规则
                 </button>
-              ))}
-            </nav>
-            <div className="drawer-content">
-              {connection === "guest" ? <div className="guest-gate"><CircleUserRound size={20} /><span>登录后可保存个人资料和服务配置。</span><Link href="/signin">去登录</Link></div> : null}
-
-              {drawerTab === "phrases" ? (
-                <section>
-                  <div className="drawer-section-head"><div><span className="section-kicker">PHRASES</span><h3>我的常用词</h3></div><button type="button" onClick={() => setPhraseEditor({ name: "", category: "自定义", content: "", sortOrder: 0 })}><Plus size={13} /> 新建</button></div>
-                  <div className="phrase-toolbar"><input value={phraseSearch} onChange={(event) => setPhraseSearch(event.target.value)} placeholder="搜索词语、分类或内容" /><select value={phraseCategory} onChange={(event) => setPhraseCategory(event.target.value)}>{categories.map((category) => <option key={category}>{category}</option>)}</select></div>
-                  {phraseEditor ? (
-                    <form className="inline-form" onSubmit={savePhrase}>
-                      <input required maxLength={80} value={phraseEditor.name} onChange={(event) => setPhraseEditor({ ...phraseEditor, name: event.target.value })} placeholder="名称" />
-                      <input required maxLength={80} value={phraseEditor.category} onChange={(event) => setPhraseEditor({ ...phraseEditor, category: event.target.value })} placeholder="分类" />
-                      <textarea required maxLength={4000} value={phraseEditor.content} onChange={(event) => setPhraseEditor({ ...phraseEditor, content: event.target.value })} placeholder="词语或短语内容" />
-                      <div><button type="button" onClick={() => setPhraseEditor(null)}>取消</button><button type="submit" disabled={phraseSaving}>保存</button></div>
-                    </form>
-                  ) : null}
-                  <div className="record-list">
-                    {phrasesLoading ? <p>加载中...</p> : visiblePhrases.map((phrase) => (
-                      <article className="record-card" key={phrase.id}>
-                        <button type="button" onClick={() => insertPhrase(phrase.content)}><strong>{phrase.name}</strong><p>{phrase.content}</p><small>{phrase.category}</small></button>
-                        <div><button type="button" onClick={() => setPhraseEditor(phrase)}><Pencil size={12} /></button><button type="button" onClick={() => void deletePhrase(phrase.id)}><Trash2 size={12} /></button></div>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-
-              {drawerTab === "history" ? (
-                <section><div className="drawer-section-head"><div><span className="section-kicker">HISTORY · {historyTotal}/100</span><h3>生成历史</h3></div><button type="button" onClick={() => void clearHistory()}>清空</button></div>
-                  <div className="record-list">{historyLoading ? <p>加载中...</p> : historyItems.map((item) => <article className="record-card" key={item.id}><button type="button" onClick={() => restoreRecord(item)}><strong>{item.promptEn || item.promptZh}</strong><small>{sourceLabel(item.source)}</small></button><button type="button" onClick={() => void deleteHistory(item.id)}><Trash2 size={12} /></button></article>)}</div>
-                </section>
-              ) : null}
-
-              {drawerTab === "favorites" ? (
-                <section><div className="drawer-section-head"><div><span className="section-kicker">FAVORITES · {favoriteTotal}</span><h3>收藏与备注</h3></div></div>
-                  <div className="record-list">{favoritesLoading ? <p>加载中...</p> : favorites.map((item) => <article className="record-card" key={item.id}><button type="button" onClick={() => restoreRecord(item)}><strong>{item.promptEn || item.promptZh}</strong><small>{item.note || "无备注"}</small></button><div><button type="button" onClick={() => setEditingFavorite({ id: item.id, note: item.note ?? "" })}><Pencil size={12} /></button><button type="button" onClick={() => void deleteFavorite(item.id)}><Trash2 size={12} /></button></div></article>)}</div>
-                </section>
-              ) : null}
-
-              {drawerTab === "submissions" ? (
-                <section><div className="drawer-section-head"><div><span className="section-kicker">PUSH RECORDS · {submissionTotal}</span><h3>配置入口推送记录</h3></div></div>
-                  <p className="inline-notice">这里记录的是 HTTP 推送状态，不是 Midjourney 图片任务状态。</p>
-                  <div className="record-list">{submissionsLoading ? <p>加载中...</p> : submissions.map((item) => <article className="record-card" key={item.id}><div><strong>{item.promptEn || item.promptZh}</strong><small>{item.status}{item.errorMessage ? ` · ${item.errorMessage}` : ""}</small></div></article>)}</div>
-                </section>
-              ) : null}
-
-              {drawerTab === "settings" ? (
-                <section className="settings-stack">
-                  <div className="security-note"><ShieldCheck size={17} /><div><h3>服务与密钥</h3><p>端点和密钥由服务器使用 AES-256-GCM 加密保存，浏览器只显示脱敏信息。</p></div></div>
-                  <section className="settings-card"><h3>Midjourney 推送入口</h3><p>仅转发 Prompt，不创建或跟踪官方 Midjourney 任务。</p>{renderConfigs("midjourney", midjourneyConfigs)}
-                    <form className="config-form" onSubmit={saveMidjourneyConfig}>
-                      <input required value={midjourneyForm.label} onChange={(event) => setMidjourneyForm({ ...midjourneyForm, label: event.target.value })} placeholder="配置名称" />
-                      <select value={midjourneyForm.provider} onChange={(event) => setMidjourneyForm({ ...midjourneyForm, provider: event.target.value as MidjourneyConfigForm["provider"] })}><option value="discord_webhook">Discord Webhook</option><option value="custom_http">自定义 HTTP</option></select>
-                      <input required type="url" value={midjourneyForm.endpoint} onChange={(event) => setMidjourneyForm({ ...midjourneyForm, endpoint: event.target.value })} placeholder="https://discord.com/api/webhooks/..." />
-                      <input type="password" value={midjourneyForm.apiKey} onChange={(event) => setMidjourneyForm({ ...midjourneyForm, apiKey: event.target.value })} placeholder="API Key（可选）" />
-                      <label><input type="checkbox" checked={midjourneyForm.isActive} onChange={(event) => setMidjourneyForm({ ...midjourneyForm, isActive: event.target.checked })} /> 保存后启用</label>
-                      <button type="submit" disabled={Boolean(configAction)}>保存推送配置</button>
-                    </form>
-                  </section>
-                  <section className="settings-card"><h3>AI 模型</h3>{renderConfigs("ai", providerConfigs)}
-                    <form className="config-form" onSubmit={saveAiConfig}>
-                      <input required value={aiForm.label} onChange={(event) => setAiForm({ ...aiForm, label: event.target.value })} placeholder="配置名称" />
-                      <input required value={aiForm.provider} onChange={(event) => setAiForm({ ...aiForm, provider: event.target.value })} placeholder="供应商" />
-                      <input required value={aiForm.model} onChange={(event) => setAiForm({ ...aiForm, model: event.target.value })} placeholder="模型名" />
-                      <input type="url" value={aiForm.endpoint} onChange={(event) => setAiForm({ ...aiForm, endpoint: event.target.value })} placeholder="兼容端点（可选）" />
-                      <input required type="password" value={aiForm.apiKey} onChange={(event) => setAiForm({ ...aiForm, apiKey: event.target.value })} placeholder="API Key" />
-                      <label><input type="checkbox" checked={aiForm.isActive} onChange={(event) => setAiForm({ ...aiForm, isActive: event.target.checked })} /> 保存后启用</label>
-                      <button type="submit" disabled={Boolean(configAction)}>保存 AI 配置</button>
-                    </form>
-                  </section>
-                  <section className="settings-card"><h3>翻译服务</h3>{renderConfigs("translation", translationConfigs)}
-                    <form className="config-form" onSubmit={saveTranslationConfig}>
-                      <input required value={translationForm.label} onChange={(event) => setTranslationForm({ ...translationForm, label: event.target.value })} placeholder="配置名称" />
-                      <input required value={translationForm.provider} onChange={(event) => setTranslationForm({ ...translationForm, provider: event.target.value })} placeholder="供应商" />
-                      <input type="url" value={translationForm.endpoint} onChange={(event) => setTranslationForm({ ...translationForm, endpoint: event.target.value })} placeholder="端点（可选）" />
-                      <input type="password" value={translationForm.apiKey} onChange={(event) => setTranslationForm({ ...translationForm, apiKey: event.target.value })} placeholder="API Key（可选）" />
-                      <label><input type="checkbox" checked={translationForm.isActive} onChange={(event) => setTranslationForm({ ...translationForm, isActive: event.target.checked })} /> 保存后启用</label>
-                      <button type="submit" disabled={Boolean(configAction)}>保存翻译配置</button>
-                    </form>
-                  </section>
-                  {settingsLoading ? <p>正在加载配置...</p> : null}
-                </section>
-              ) : null}
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      {favoriteDialog ? <div className="modal-backdrop"><section className="favorite-modal"><header><div><h3>收藏 Prompt</h3><p>收藏没有数量上限，快照不会随历史清理而删除。</p></div><button type="button" onClick={() => setFavoriteDialog(false)}><X size={17} /></button></header><textarea maxLength={1000} value={favoriteNote} onChange={(event) => setFavoriteNote(event.target.value)} placeholder="添加备注（可选）" /><footer><span>{favoriteNote.length}/1000</span><button type="button" disabled={favoriteSaving} onClick={() => void saveFavorite()}>{favoriteSaving ? "保存中..." : "确认收藏"}</button></footer></section></div> : null}
-      {editingFavorite ? <div className="modal-backdrop"><form className="favorite-modal" onSubmit={updateFavoriteNote}><header><h3>修改收藏备注</h3><button type="button" onClick={() => setEditingFavorite(null)}><X size={17} /></button></header><textarea maxLength={1000} value={editingFavorite.note} onChange={(event) => setEditingFavorite({ ...editingFavorite, note: event.target.value })} /><footer><button type="submit">保存备注</button></footer></form></div> : null}
-      {toast ? <div className="toast-message">{toast}</div> : null}
-    </main>
-  );
-}
-
-/*
-  return (
-    <main className="workbench-shell">
-      <header className="topbar">
-        <Link className="brand" href="/" aria-label="Prompt Craft Studio 棣栭〉">
-          <span className="brand-mark"><WandSparkles size={18} /></span>
-          <span>
-            <strong>Prompt Craft Studio</strong>
-            <small>Midjourney 鍒涗綔宸ヤ綔鍙?/small>
-          </span>
-        </Link>
-        <div className="topbar-center">
-          <span className="workspace-dot" />
-          涓嫳鏂?Prompt 路 鍙傛暟鏍￠獙 路 鐩存帴鎻愪氦
-        </div>
-        <div className="topbar-actions">
-          <span className={`connection-pill is-${connection}`}>
-            {connection === "checking" ? <LoaderCircle className="spin" size={13} /> : connection === "connected" ? <Check size={13} /> : <CircleAlert size={13} />}
-            <span>
-              {connection === "connected"
-                ? "宸茶繛鎺?"
-                : connection === "guest"
-                  ? "鏈櫥褰?"
-                  : connection === "offline"
-                    ? "鏈嶅姟寮傚父"
-                    : "妫€鏌ヤ腑"}
-            </span>
-          </span>
-          <button className="secondary-button desktop-library-button" type="button" onClick={() => openDrawer("phrases")}>
-            <Library size={14} /> 绱犳潗搴?          </button>
-          <button className="icon-button mobile-only" type="button" aria-label="鎵撳紑绱犳潗搴?" onClick={() => openDrawer("phrases"")}>
-            <Menu size={16} />
-          </button>
-          <Link className="avatar-button" href="/signin" aria-label="鐧诲綍璐︽埛">
-            <CircleUserRound size={17} />
-          </Link>
-        </div>
-      </header>
-
-      <nav className="mobile-tabs" aria-label="绉诲姩绔伐浣滃彴瀵艰埅">
-        <button className={mobileTab === "materials" ? "is-active" : ""} type="button" onClick={() => setMobileTab("materials")}>
-          <LayoutTemplate size={14} /> 绱犳潗
-        </button>
-        <button className={mobileTab === "create" ? "is-active" : ""} type="button" onClick={() => setMobileTab("create")}>
-          <Sparkles size={14} /> 鍒涗綔
-        </button>
-        <button className={mobileTab === "parameters" ? "is-active" : ""} type="button" onClick={() => setMobileTab("parameters")}>
-          <SlidersHorizontal size={14} /> 鍙傛暟
-        </button>
-      </nav>
-
-      <div className="workbench-grid" data-mobile-tab={mobileTab}>
-        <aside className="left-panel panel-scroll">
-          <section className="panel-section">
-            <div className="section-heading">
-              <div>
-                <span className="section-kicker">TEMPLATES</span>
-                <h2>鍒涗綔妯℃澘</h2>
-              </div>
-              <span className="count-badge">{TEMPLATES.length}</span>
-            </div>
-            <div className="template-list">
-              {TEMPLATES.map((template) => (
-                <button
-                  className={`template-card ${activeTemplate === template.id ? "is-active" : ""}`}
-                  key={template.id}
-                  type="button"
-                  onClick={() => selectTemplate(template)}
-                >
-                  <span className="template-glow" />
-                  <LayoutTemplate size={16} />
-                  <span className="template-card-copy">
-                    <small>{template.eyebrow}</small>
-                    <strong>{template.title}</strong>
-                    <span>{template.accent}</span>
-                  </span>
-                  {activeTemplate === template.id && <Check size={13} />}
+                <button className={mode === "ai" ? "active" : ""} onClick={() => setMode("ai")} type="button">
+                  <Sparkles size={14} />AI 三版本
                 </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel-section">
-            <div className="section-heading">
-              <div>
-                <span className="section-kicker">QUICK PHRASES</span>
-                <h2>甯哥敤璇嶈涓庣煭璇?/h2>
               </div>
-              <button className="text-button" type="button" onClick={() => openDrawer("phrases")}>
-                绠＄悊
+              {draft && draft.variants.length > 1 ? (
+                <div className="v2-variants" role="tablist" aria-label="Prompt 版本">
+                  {draft.variants.map((variant) => (
+                    <button
+                      key={variant.id}
+                      role="tab"
+                      aria-selected={selectedVariant === variant.id}
+                      className={selectedVariant === variant.id ? "active" : ""}
+                      onClick={() => chooseVariant(variant.id)}
+                      type="button"
+                    >
+                      {variant.label}
+                    </button>
+                  ))}
+                </div>
+              ) : <span className="v2-variant-placeholder" aria-hidden="true" />}
+              <button type="button" className="v2-primary" disabled={generating} onClick={() => void generate()}>
+                {generating ? <LoaderCircle className="spin" size={17} /> : <WandSparkles size={17} />}
+                {generating ? "生成中…" : "生成 Prompt"}
               </button>
             </div>
-            <div className="phrase-cloud">
-              {allPhrases.slice(0, 12).map((phrase) => (
-                <button className="phrase-chip" key={phrase.id} type="button" onClick={() => insertPhrase(phrase.content)}>
-                  <Plus size={11} />
-                  {phrase.name}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel-section library-links">
-            <button className="settings-link" type="button" onClick={() => openDrawer("history")}>
-              <History size={14} /> 鍘嗗彶璁板綍锛堟渶澶?100 鏉★級
-            </button>
-            <button className="settings-link" type="button" onClick={() => openDrawer("favorites")}>
-              <Bookmark size={14} /> 鏀惰棌涓庡娉?            </button>
-            <button className="settings-link" type="button" onClick={() => openDrawer("submissions")}>
-              <Send size={14} /> 鎻愪氦璁板綍
-            </button>
-            <button className="settings-link" type="button" onClick={() => openDrawer("settings")}>
-              <Settings2 size={14} /> 鏈嶅姟閰嶇疆
-            </button>
-          </section>
-        </aside>
-
-        <section className="creation-panel panel-scroll">
-          <div className="creation-inner">
-            <header className="creation-header">
-              <div>
-                <span className="section-kicker">PROMPT WORKBENCH</span>
-                <h1>鎶婄伒鎰熸暣鐞嗘垚鍙鐢ㄧ殑鐢婚潰璇█</h1>
-                <p>缁撴瀯鍖栧～鍐欍€佽嚜鍔ㄧ炕璇戜笌鍙傛暟鏍￠獙锛岃姣忔鐢熸垚閮芥湁杩瑰彲寰€?/p>
-              </div>
-            </header>
-
-            <section className="idea-card">
-              <div className="idea-card-top">
-                <label htmlFor="idea">
-                  <Sparkles size={14} /> 鍒涙剰鎻忚堪
-                </label>
-                <div className="mode-switch" role="group" aria-label="鐢熸垚妯″紡">
-                  <button className={mode === "rule" ? "is-active" : ""} type="button" onClick={() => setMode("rule")}>
-                    瑙勫垯
-                  </button>
-                  <button className={mode === "ai" ? "is-active" : ""} type="button" onClick={() => setMode("ai")}>
-                    AI
-                  </button>
-                </div>
-              </div>
+            <label className="v2-idea-input">
+              <span>中文创意</span>
               <textarea
-                id="idea"
                 value={idea}
                 onChange={(event) => setIdea(event.target.value)}
-                onKeyDown={handleIdeaKeyDown}
-                placeholder="渚嬪锛氫簯娴蜂笂鏂圭殑鏈潵缇庢湳棣嗭紝瀹侀潤鑰屽．闃斺€︹€?"
+                maxLength={4000}
+                placeholder="例如：一位在雨夜霓虹街道回头的女性，电影感、克制而神秘"
               />
-              <div className="idea-footer">
-                <span><kbd>Ctrl</kbd> + <kbd>Enter</kbd> 快速生成</span>
-                <button className="generate-button" type="button" disabled={generating} onClick={() => void handleGenerate()}>
-                  {generating ? <LoaderCircle className="spin" size={14} /> : mode === "ai" ? <Zap size={14} /> : <WandSparkles size={14} />}
-                  {generating ? "姝ｅ湪鐢熸垚" : mode === "ai" ? "AI 鐢熸垚" : "鐢熸垚 Prompt"}
-                </button>
-              </div>
-            </section>
-
-            <div className="editor-heading">
-              <div>
-                <span className="section-kicker">STRUCTURE</span>
-                <h2>结构化编辑</h2>
-              </div>
-              <span className="completion-meter" title={`瀹屾垚搴?${progress}%`}>
-                <span style={{ width: `${progress}%` }} />
-              </span>
-            </div>
-
-            <div className="field-grid">
-              {FIELD_META.map((meta) => (
-                <label className={`field-card ${meta.wide ? "is-wide" : ""}`} key={meta.key}>
-                  <span className="field-label">
-                    {meta.label}
-                    <small>{meta.hint}</small>
-                  </span>
-                  <textarea
-                    ref={(element) => {
-                      textareaRefs.current[meta.key] = element;
-                    }}
-                    value={fields[meta.key]}
-                    onChange={(event) => updateField(meta.key, event.target.value)}
-                    onFocus={(event) => rememberCaret(meta.key, event.currentTarget)}
-                    onSelect={(event) => rememberCaret(meta.key, event.currentTarget)}
-                    placeholder={meta.hint}
-                  />
-                </label>
-              ))}
-            </div>
-
-            <section className="result-section">
-              <div className="result-heading">
-                <div>
-                  <span className="section-kicker">OUTPUT</span>
-                  <h2>鐢熸垚缁撴灉</h2>
-                </div>
-                <span className="translation-status">
-                  <Languages size={12} />
-                  {currentDraft?.warnings.some((warning) => warning.code === "TRANSLATION_FALLBACK")
-                    ? "閮ㄥ垎鍐呭淇濈暀鍘熸枃"
-                    : "涓嫳鍙岃杈撳嚭"}
-                </span>
-              </div>
-
-              {currentDraft?.warnings.length ? (
-                <div className="inline-notice">
-                  <CircleAlert size={14} />
-                  <span>{currentDraft.warnings.map(warningText).join("；")}</span>
-                </div>
-              ) : null}
-
-              <div className="result-grid">
-                <article className="result-card">
-                  <header className="result-card-head">
-                    <span>涓枃鎻忚堪 <small>ZH</small></span>
-                    <button type="button" disabled={!outputZh} onClick={() => void copyOutput("zh")}>
-                      {copied === "zh" ? <Check size={11} /> : <Copy size={11} />} 澶嶅埗
-                    </button>
-                  </header>
-                  <textarea value={outputZh} onChange={(event) => setOutputZh(event.target.value)} placeholder="生成后显示中文描述" />
-                </article>
-                <article className="result-card is-primary">
-                  <header className="result-card-head">
-                    <span>English Prompt <small>MJ</small></span>
-                    <button type="button" disabled={!outputEn} onClick={() => void copyOutput("en")}>
-                      {copied === "en" ? <Check size={11} /> : <Copy size={11} />} 澶嶅埗
-                    </button>
-                  </header>
-                  <textarea value={outputEn} onChange={(event) => setOutputEn(event.target.value)} placeholder="Generated English prompt appears here" />
-                </article>
-              </div>
-
-              <div className="result-actions">
-                <button className="secondary-button" type="button" disabled={!hasOutput} onClick={() => setFavoriteDialog(true)}>
-                  <Heart size={14} /> 收藏并备注
-                </button>
-                <button className="primary-copy-button submit-midjourney-button" type="button" disabled={!hasOutput || !activeMidjourneyConfig || submitting} onClick={() => void submitToMidjourney()}>
-                  {submitting ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}
-                  {submitting ? "发送中..." : "发送到配置入口"}
-                </button>
-              </div>
-
-              {!activeMidjourneyConfig ? (
-                <button className="submission-hint" type="button" onClick={() => openDrawer("settings")}>
-                  <CircleAlert size={12} /> 璇峰厛鍦ㄦ湇鍔￠厤缃腑鍚敤 Midjourney 閰嶇疆绔偣
-                </button>
-              ) : null}
-              {submissionResult ? (
-                <div className={`submission-state is-${submissionResult.status}`}>
-                  <Check size={13} />
-                  <span>投递状态：{submissionResult.status} / 记录 ID：{submissionResult.submissionId}</span>
-                </div>
-              ) : null}
-            </section>
-          </div>
-        </section>
-
-        <aside className="right-panel panel-scroll">
-          <div className="parameter-header">
-            <div>
-              <span className="section-kicker">MIDJOURNEY</span>
-              <h2>鐢熸垚鍙傛暟</h2>
-            </div>
-            <SlidersHorizontal size={16} />
-          </div>
-
-          <div className="parameter-group">
-            <label className="select-field">
-              <span className="field-label">妯″瀷鐗堟湰</span>
-              <span>
-                <select
-                  value={parameters.model}
-                  onChange={(event) =>
-                    setParameters((current) => ({
-                      ...current,
-                      model: event.target.value as PromptParameters["model"],
-                      ...(event.target.value === "8.1" ? { quality: undefined } : {}),
-                    }))
-                  }
-                >
-                  {MIDJOURNEY_MODELS.map((model) => <option key={model} value={model}>{model}</option>)}
-                </select>
-              </span>
             </label>
-
-            <div className="aspect-control">
-              <span className="field-label">鐢婚潰姣斾緥</span>
-              <div className="aspect-presets">
-                {["1:1", "4:5", "3:2", "16:9"].map((ratio) => (
+            <BilingualTokenEditor
+              blocks={normalizedBlocks}
+              translationStatuses={translationStatuses}
+              onUpdate={updateToken}
+              onDelete={deleteToken}
+              onAdd={addToken}
+              onRetry={retryTokenTranslation}
+              onResyncEnglish={resyncEnglish}
+            />
+            <div className="v2-full-prompt">
+              <div className="v2-full-prompt-heading">
+                <span>完整 Prompt</span>
+                <small>参数由系统维护并始终位于末尾</small>
+              </div>
+              <code>{fullEn || "词块与参数会在这里组合为完整 Prompt。"}</code>
+            </div>
+            {!!warnings.length && (
+              <div className="v2-warnings">
+                {warnings.slice(0, 8).map((warning, index) => (
+                  <p key={`${warning.code}-${index}`} className={warning.severity}>
+                    <CircleAlert size={14} />{warning.message}
+                    {warning.suggestion && <span>{warning.suggestion}</span>}
+                  </p>
+                ))}
+              </div>
+            )}
+            <div className="v2-output-actions">
+              <button type="button" onClick={() => void copy(fullEn, "完整 Prompt")}><Copy size={15} />复制完整 Prompt</button>
+              <button type="button" onClick={() => void copy(bodyEn, "英文正文")}><Copy size={15} />只复制英文正文</button>
+              <button type="button" onClick={() => void copy(readableBodyZh, "中文描述")}><Copy size={15} />复制中文描述</button>
+              <button type="button" onClick={() => setFavoriteDialog(true)} disabled={!authenticated || !fullEn}>
+                <Heart size={15} />收藏作品
+              </button>
+              <span className="v2-push-action">
+                <button type="button" onClick={() => void pushPrompt()} disabled={submitting || !activePushConfig || !fullEn}>
+                  {submitting ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}
+                  发送到配置入口
+                </button>
+                <ControlHelp label="发送到配置入口">
+                  仅把 Prompt 文本转发到 Discord Webhook 或自定义 HTTP，不会执行 Midjourney `/imagine`，也不返回图片任务状态。
+                </ControlHelp>
+              </span>
+              <div className="v2-export-menu">
+                <Download size={15} />
+                {(["txt", "markdown", "json"] as const).map((format) => (
                   <button
-                    className={parameters.aspectRatio === ratio ? "is-active" : ""}
-                    key={ratio}
+                    key={format}
                     type="button"
-                    onClick={() => setParameters((current) => ({ ...current, aspectRatio: ratio }))}
+                    disabled={!authenticated || !fullEn}
+                    onClick={() => {
+                      const snapshot = currentSnapshot();
+                      if (snapshot) void exportItems(format, { scope: "current", snapshot });
+                    }}
                   >
-                    <span className={`aspect-shape aspect-${ratio.replace(":", "-")}`} />
-                    {ratio}
+                    {format === "markdown" ? "MD" : format.toUpperCase()}
                   </button>
                 ))}
               </div>
-              <input
-                aria-label="鑷畾涔夌敾闈㈡瘮渚?"
-                value={parameters.aspectRatio ?? ""}
-                onChange={(event) => setParameters((current) => ({ ...current, aspectRatio: event.target.value }))}
-                placeholder="渚嬪 21:9"
-              />
             </div>
           </div>
 
-          <div className="parameter-group range-group">
-            <label className="range-field">
-              <span><span className="field-label">Stylize</span><output>{parameters.stylize ?? 0}</output></span>
-              <input
-                type="range"
-                min={0}
-                max={1000}
-                value={parameters.stylize ?? 0}
-                style={rangeStyle(parameters.stylize ?? 0, 1000)}
-                onChange={(event) => setParameters((current) => ({ ...current, stylize: Number(event.target.value) }))}
-              />
-              <small>椋庢牸鍖栧己搴?0鈥?000</small>
-            </label>
-            <label className="range-field">
-              <span><span className="field-label">Chaos</span><output>{parameters.chaos ?? 0}</output></span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={parameters.chaos ?? 0}
-                style={rangeStyle(parameters.chaos ?? 0, 100)}
-                onChange={(event) => setParameters((current) => ({ ...current, chaos: Number(event.target.value) }))}
-              />
-              <small>缁撴灉鍙樺寲绋嬪害 0鈥?00</small>
-            </label>
-            <label className="range-field">
-              <span><span className="field-label">Weird</span><output>{parameters.weird ?? 0}</output></span>
-              <input
-                type="range"
-                min={0}
-                max={3000}
-                step={10}
-                value={parameters.weird ?? 0}
-                style={rangeStyle(parameters.weird ?? 0, 3000)}
-                onChange={(event) => setParameters((current) => ({ ...current, weird: Number(event.target.value) }))}
-              />
-              <small>瀹為獙鎬у己搴?0鈥?000</small>
-            </label>
-          </div>
-
-          <div className="parameter-group compact-grid">
-            <label className="text-field">
-              <span className="field-label">Quality</span>
-              <input
-                type="number"
-                step="0.25"
-                disabled={parameters.model === "8.1"}
-                value={parameters.quality ?? ""}
-                onChange={(event) =>
-                  setParameters((current) => ({
-                    ...current,
-                    quality: event.target.value ? Number(event.target.value) : undefined,
-                  }))
-                }
-              />
-            </label>
-            <label className="text-field">
-              <span className="field-label">Seed</span>
-              <input
-                type="number"
-                min={0}
-                max={4294967295}
-                value={parameters.seed ?? ""}
-                onChange={(event) =>
-                  setParameters((current) => ({
-                    ...current,
-                    seed: event.target.value ? Number(event.target.value) : undefined,
-                  }))
-                }
-                placeholder="闅忔満"
-              />
-            </label>
-          </div>
-
-          <div className="parameter-group">
-            <label className="toggle-row">
-              <span><strong>Raw</strong><small>鍑忓皯榛樿椋庢牸骞查</small></span>
-              <input type="checkbox" checked={parameters.raw ?? false} onChange={(event) => setParameters((current) => ({ ...current, raw: event.target.checked }))} />
-            </label>
-            <label className="toggle-row">
-              <span><strong>Tile</strong><small>鐢熸垚鏃犵紳骞抽摵绾圭悊</small></span>
-              <input type="checkbox" checked={parameters.tile ?? false} onChange={(event) => setParameters((current) => ({ ...current, tile: event.target.checked }))} />
-            </label>
-          </div>
-
-          <div className="parameter-group">
-            <label className="text-field">
-              <span className="field-label">No / 棰濆鎺掗櫎</span>
-              <textarea
-                value={(parameters.no ?? []).join(", ")}
-                onChange={(event) =>
-                  setParameters((current) => ({
-                    ...current,
-                    no: event.target.value.split(/[,锛宂/).map((item) => item.trim()).filter(Boolean),
-                  }))
-                }
-                placeholder="text, watermark, blurry"
-              />
-            </label>
-          </div>
-
-          <div className="parameter-preview">
-            <span>鍙傛暟棰勮</span>
-            <code>{parameterString || "灏氭湭璁剧疆鍙傛暟"}</code>
-          </div>
-          {parameterValidation.warnings.length ? (
-            <div className="parameter-warnings">
-              {parameterValidation.warnings.map((warning) => (
-                <p className={warning.severity === "error" ? "is-error" : ""} key={`${warning.code}-${warning.field ?? ""}`}>
-                  <CircleAlert size={11} /> {warning.message}
-                </p>
-              ))}
+          <div className="v2-editor-card">
+            <div className="v2-section-heading">
+              <div><span>BLOCK EDITOR</span><h2>结构化词块</h2></div>
+              <small>拖动排序 · 跨组移动 · 双语可编辑</small>
             </div>
-          ) : null}
-        </aside>
+            <BlockEditor
+              blocks={blocks}
+              bilingualSyncEnabled={draft?.bilingualSyncEnabled ?? false}
+              onChange={commitBlocks}
+            />
+          </div>
+
+          <ReferencePanel
+            references={references}
+            targetSurface={targetSurface}
+            taskType={taskType}
+            fullPrompt={fullEn}
+            onChange={setReferences}
+            onCopy={(value, label) => void copy(value, label)}
+          />
+        </section>
+
+        <ParameterPanel
+          parameters={parameters}
+          negativeTokens={negativeValues(normalizedBlocks, "en")}
+          targetSurface={targetSurface}
+          taskType={taskType}
+          onParameters={(value) => setParameters(stripNegativeParameter(value))}
+          onNegativeTokens={replaceNegativeTokens}
+          onSurface={setTargetSurface}
+          onTask={setTaskType}
+        />
       </div>
 
-      {drawerOpen ? (
-        <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.currentTarget === event.target) setDrawerOpen(false);
-        }}>
-          <aside className="library-drawer" role="dialog" aria-modal="true" aria-label="涓汉绱犳潗涓庢湇鍔￠厤缃?">
-            <header className="drawer-header">
-              <div>
-                <span className="section-kicker">PERSONAL LIBRARY</span>
-                <h2>涓汉鍒涗綔璧勬枡搴?/h2>
-              </div>
-              <button className="icon-button" type="button" aria-label="鍏抽棴" onClick={() => setDrawerOpen(false)}>
-                <X size={16} />
-              </button>
+      <nav className="v2-mobile-nav">
+        <button className={mobileTab === "materials" ? "active" : ""} onClick={() => setMobileTab("materials")}><Menu size={17} />素材</button>
+        <button className={mobileTab === "create" ? "active" : ""} onClick={() => setMobileTab("create")}><WandSparkles size={17} />创作</button>
+        <button className={mobileTab === "parameters" ? "active" : ""} onClick={() => setMobileTab("parameters")}><Settings2 size={17} />参数</button>
+      </nav>
+
+      {drawerOpen && (
+        <>
+          <button className="v2-drawer-backdrop" aria-label="关闭抽屉" onClick={() => setDrawerOpen(false)} />
+          <aside className="v2-drawer">
+            <header>
+              <div><span>WORKSPACE</span><h2>{drawerTitle(drawerTab)}</h2></div>
+              <button type="button" aria-label="关闭抽屉" onClick={() => setDrawerOpen(false)}><X size={18} /></button>
             </header>
-            <nav className="drawer-tabs drawer-tabs-five">
-              <button className={drawerTab === "phrases" ? "is-active" : ""} type="button" onClick={() => setDrawerTab("phrases")}><Tags size={13} /> 甯哥敤璇?/button>
-              <button className={drawerTab === "history" ? "is-active" : ""} type="button" onClick={() => { setDrawerTab("history"); void loadHistory(historyPage); }}><Clock3 size={13} /> 鍘嗗彶</button>
-              <button className={drawerTab === "favorites" ? "is-active" : ""} type="button" onClick={() => { setDrawerTab("favorites"); void loadFavorites(favoritePage); }}><Heart size={13} /> 鏀惰棌</button>
-              <button className={drawerTab === "submissions" ? "is-active" : ""} type="button" onClick={() => { setDrawerTab("submissions"); void loadSubmissions(submissionPage); }}><Send size={13} /> 鎻愪氦</button>
-              <button className={drawerTab === "settings" ? "is-active" : ""} type="button" onClick={() => { setDrawerTab("settings"); void loadConfigs(); }}><Settings2 size={13} /> 璁剧疆</button>
+            <nav>
+              {(["phrases", "history", "library", "submissions", "settings"] as DrawerTab[]).map((tab) => (
+                <button
+                  key={tab}
+                  className={drawerTab === tab ? "active" : ""}
+                  onClick={() => openDrawer(tab)}
+                  type="button"
+                >
+                  {drawerTitle(tab)}
+                </button>
+              ))}
             </nav>
-            <div className="drawer-content">
-              {connection === "guest" ? (
-                <div className="inline-notice">
-                  <CircleAlert size={14} />
-                  <span>鐧诲綍鍚庡嵆鍙法璁惧淇濆瓨甯哥敤璇嶃€佸巻鍙层€佹敹钘忓拰鏈嶅姟閰嶇疆銆?/span>
-                  <Link href="/signin">鍘荤櫥褰?/Link>
+            <div className="v2-drawer-body">
+              {!authenticated ? (
+                <div className="v2-guest-card">
+                  <Archive size={28} />
+                  <h3>登录后使用私人工作区</h3>
+                  <p>常用词、历史、收藏修订和加密服务配置都按账号隔离保存。</p>
+                  <Link href="/signin">前往登录</Link>
                 </div>
-              ) : null}
-              {drawerTab === "phrases" ? (
-                <PhraseManager
-                  categories={categories}
-                  editor={phraseEditor}
-                  loading={phrasesLoading}
-                  phraseCategory={phraseCategory}
-                  phraseSearch={phraseSearch}
-                  phrases={visiblePhrases}
-                  saving={phraseSaving}
-                  onRefresh={() => void loadPhrases()}
-                  onCategoryChange={setPhraseCategory}
-                  onDelete={(id) => void deletePhrase(id)}
-                  onEdit={setPhraseEditor}
-                  onEditorChange={setPhraseEditor}
-                  onInsert={insertPhrase}
-                  onNew={() => setPhraseEditor(DEFAULT_PHRASE_FORM)}
-                  onSearchChange={setPhraseSearch}
-                  onSubmit={savePhrase}
+              ) : drawerTab === "phrases" ? (
+                <PhraseManager phrases={phrases} onReload={loadPrivateData} notify={notify} onUse={addPhrase} />
+              ) : drawerTab === "history" ? (
+                <RecordList
+                  records={historyItems}
+                  empty="还没有生成历史。"
+                  onRestore={(record) => restoreSnapshot(record.snapshot)}
+                  onReload={loadHistory}
+                  notify={notify}
                 />
-              ) : null}
-              {drawerTab === "history" ? (
-                <HistoryManager
-                  items={historyItems}
-                  loading={historyLoading}
-                  page={historyPage}
-                  total={historyTotal}
-                  onClear={() => void clearHistory()}
-                  onDelete={(id) => void deleteHistory(id)}
-                  onPage={(page) => void loadHistory(page)}
-                  onRestore={restoreRecord}
-                />
-              ) : null}
-              {drawerTab === "favorites" ? (
-                <FavoritesManager
-                  editing={editingFavorite}
-                  items={favorites}
-                  loading={favoritesLoading}
-                  page={favoritePage}
-                  total={favoriteTotal}
-                  onDelete={(id) => void deleteFavorite(id)}
-                  onEdit={setEditingFavorite}
-                  onEditChange={setEditingFavorite}
-                  onPage={(page) => void loadFavorites(page)}
-                  onRestore={restoreRecord}
-                  onSubmit={updateFavoriteNote}
-                />
-              ) : null}
-              {drawerTab === "submissions" ? (
-                <SubmissionManager
-                  items={submissions}
-                  loading={submissionsLoading}
-                  page={submissionPage}
-                  total={submissionTotal}
-                  onPage={(page) => void loadSubmissions(page)}
-                  onRestore={(item) => {
-                    setOutputZh(item.promptZh);
-                    setOutputEn(item.promptEn);
-                    setMode(item.source);
-                    setDrawerOpen(false);
-                    setMobileTab("create");
+              ) : drawerTab === "library" ? (
+                <LibraryManager
+                  favorites={favorites}
+                  folders={folders}
+                  search={favoriteSearch}
+                  folderFilter={folderFilter}
+                  revisionTarget={revisionTarget}
+                  revisions={revisions}
+                  onSearch={setFavoriteSearch}
+                  onFolderFilter={setFolderFilter}
+                  onReload={loadLibrary}
+                  onRestore={restoreSnapshot}
+                  onRevisions={loadRevisions}
+                  onSaveRevision={saveRevision}
+                  onExport={(format, payload) => void exportItems(format, payload)}
+                  onDeleted={(ids) => {
+                    if (revisionTarget && ids.includes(revisionTarget.id)) {
+                      setRevisionTarget(null);
+                      setRevisions([]);
+                    }
                   }}
+                  notify={notify}
                 />
-              ) : null}
-              {drawerTab === "settings" ? (
+              ) : drawerTab === "submissions" ? (
+                <SubmissionList items={submissions} />
+              ) : (
                 <SettingsManager
-                  aiForm={aiForm}
-                  aiConfigs={providerConfigs}
-                  busy={configAction}
-                  loading={settingsLoading}
-                  midjourneyForm={midjourneyForm}
-                  midjourneyConfigs={midjourneyConfigs}
-                  translationForm={translationForm}
-                  translationConfigs={translationConfigs}
-                  onActivate={(kind, id) => void activateConfig(kind, id)}
-                  onAiChange={setAiForm}
-                  onAiSubmit={saveAiConfig}
-                  onDelete={(kind, id) => void deleteConfig(kind, id)}
-                  onMidjourneyChange={setMidjourneyForm}
-                  onMidjourneySubmit={saveMidjourneyConfig}
-                  onTest={(kind, id) => void testConfig(kind, id)}
-                  onTranslationChange={setTranslationForm}
-                  onTranslationSubmit={saveTranslationConfig}
+                  ai={aiConfigs}
+                  translation={translationConfigs}
+                  push={pushConfigs}
+                  siteServices={siteServices}
+                  onReload={loadPrivateData}
+                  notify={notify}
                 />
-              ) : null}
+              )}
             </div>
           </aside>
-        </div>
-      ) : null}
+        </>
+      )}
 
-      {favoriteDialog ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.currentTarget === event.target) setFavoriteDialog(false);
-        }}>
-          <section className="favorite-modal" role="dialog" aria-modal="true" aria-labelledby="favorite-title">
-            <span className="favorite-icon"><Heart size={19} /></span>
+      <DragOverlay adjustScale={false} dropAnimation={null}>
+        {activeDrag && <DragPreview item={activeDrag} />}
+      </DragOverlay>
+      </DndContext>
+
+      {templateChoice && (
+        <div className="v2-modal-backdrop" role="presentation">
+          <section className="v2-modal" role="dialog" aria-modal="true" aria-labelledby="template-title">
+            <h2 id="template-title">套用“{templateChoice.name}”</h2>
+            <p>默认合并会保留当前词块；覆盖会清空当前词块并应用模板。</p>
             <div>
-              <h2 id="favorite-title">鏀惰棌杩欎釜 Prompt</h2>
-              <p>鏀惰棌淇濆瓨瀹屾暣蹇収涓旀病鏈夋暟閲忎笂闄愶紝澶囨敞鏈€澶?1000 瀛椼€?/p>
-            </div>
-            <label>
-              澶囨敞 <small>鍙€?/small>
-              <textarea maxLength={1000} value={favoriteNote} onChange={(event) => setFavoriteNote(event.target.value)} placeholder="璁板綍閫傜敤鍦烘櫙銆佷慨鏀规柟鍚戞垨鐏垫劅鏉ユ簮鈥︹€? /">
-              <span>{favoriteNote.length}/1000</span>
-            </label>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setFavoriteDialog(false)}>鍙栨秷</button>
-              <button className="small-primary-button" type="button" disabled={favoriteSaving} onClick={() => void saveFavorite()}>
-                {favoriteSaving ? <LoaderCircle className="spin" size={13} /> : <Save size={13} />} 淇濆瓨鏀惰棌
-              </button>
+              <button type="button" onClick={() => setTemplateChoice(null)}>取消</button>
+              <button type="button" onClick={() => applyTemplate(templateChoice, "replace")}>覆盖当前</button>
+              <button type="button" className="v2-primary" onClick={() => applyTemplate(templateChoice, "merge")}>合并（默认）</button>
             </div>
           </section>
         </div>
-      ) : null}
+      )}
 
-      {toast ? <div className="toast"><Check size={13} /> {toast}</div> : null}
+      {favoriteDialog && (
+        <div className="v2-modal-backdrop">
+          <section className="v2-modal" role="dialog" aria-modal="true" aria-labelledby="favorite-title">
+            <h2 id="favorite-title">收藏为作品</h2>
+            <label>标题<input value={favoriteTitle} onChange={(e) => setFavoriteTitle(e.target.value)} placeholder="留空则自动生成" /></label>
+            <label>文件夹
+              <select value={favoriteFolder} onChange={(e) => setFavoriteFolder(e.target.value)}>
+                <option value="">未分类</option>
+                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+              </select>
+            </label>
+            <label>备注<textarea value={favoriteNote} onChange={(e) => setFavoriteNote(e.target.value)} maxLength={1000} /></label>
+            <div>
+              <button type="button" onClick={() => setFavoriteDialog(false)}>取消</button>
+              <button type="button" className="v2-primary" onClick={() => void saveFavorite()}><Heart size={15} />收藏</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {privateLoading && <div className="v2-loading"><LoaderCircle className="spin" size={17} />同步工作区…</div>}
+      {toast && <div className="v2-toast" role="status"><Check size={16} />{toast}</div>}
     </main>
   );
 }
 
-function LoadingState({ label }: { label: string }) {
-  return <div className="loading-state"><LoaderCircle className="spin" size={15} /> {label}</div>;
+function drawerTitle(tab: DrawerTab): string {
+  return {
+    phrases: "常用词",
+    history: "历史",
+    library: "作品库",
+    submissions: "推送记录",
+    settings: "服务配置",
+  }[tab];
 }
 
-function EmptyState({
-  icon,
-  title,
-  description,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}) {
+function DragPreview({ item }: { item: ActiveDragItem }) {
+  if (item.type === "phrase") {
+    return (
+      <div className="v2-drag-overlay" data-kind="phrase">
+        <small>{item.phrase.category}</small>
+        <strong>{item.phrase.name}</strong>
+        <span>{item.phrase.content}</span>
+      </div>
+    );
+  }
   return (
-    <div className="empty-state">
-      <span>{icon}</span>
-      <strong>{title}</strong>
-      <p>{description}</p>
+    <div className="v2-drag-overlay" data-kind="block">
+      <small>{fieldLabel(item.block.field)}词块</small>
+      <strong>{item.block.textZh || "未填写中文"}</strong>
+      <span>{item.block.textEn || "No English text"}</span>
     </div>
   );
 }
 
-function Pagination({
-  page,
-  total,
-  onPage,
+function DraggablePhrase({
+  phrase,
+  onUse,
+  compact = false,
 }: {
-  page: number;
-  total: number;
-  onPage: (page: number) => void;
+  phrase: PhraseLibraryItem;
+  onUse: (phrase: PhraseLibraryItem) => void;
+  compact?: boolean;
 }) {
-  const pages = Math.max(1, Math.ceil(total / 20));
-  if (pages <= 1) return null;
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `phrase-${phrase.source}-${phrase.id}`,
+    data: { type: "phrase", phrase },
+  });
   return (
-    <div className="pagination">
-      <button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)}>涓婁竴椤?/button>
-      <span>{page} / {pages}</span>
-      <button type="button" disabled={page >= pages} onClick={() => onPage(page + 1)}>涓嬩竴椤?/button>
+    <button
+      ref={setNodeRef}
+      type="button"
+      className={`v2-draggable-phrase${compact ? " compact" : ""}${isDragging ? " is-dragging" : ""}`}
+      onClick={() => onUse(phrase)}
+      {...attributes}
+      {...listeners}
+    >
+      <small>{phrase.category}</small>
+      <strong>{phrase.name}</strong>
+      {!compact && <span>{phrase.content}</span>}
+    </button>
+  );
+}
+
+function RecordList({
+  records,
+  empty,
+  onRestore,
+  onReload,
+  notify,
+}: {
+  records: PromptRecord[];
+  empty: string;
+  onRestore: (record: PromptRecord) => void;
+  onReload: () => Promise<void>;
+  notify: (message: string) => void;
+}) {
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const currentIds = records.map((record) => record.id);
+  const effectiveSelected = selectedIds.filter((id) => currentIds.includes(id));
+  const allSelected = records.length > 0 && effectiveSelected.length === records.length;
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  }
+
+  async function deleteRecords(ids: string[]) {
+    if (!ids.length) return;
+    const confirmed = window.confirm(
+      ids.length === 1
+        ? "确定删除这条生成历史吗？删除后无法恢复。"
+        : `确定批量删除已选择的 ${ids.length} 条历史吗？删除后无法恢复。`,
+    );
+    if (!confirmed) return;
+    try {
+      if (ids.length === 1) {
+        await requestJson(`/api/history/${ids[0]}`, { method: "DELETE" });
+      } else {
+        await requestJson("/api/history/batch", {
+          method: "DELETE",
+          body: JSON.stringify({ ids }),
+        });
+      }
+      setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
+      await onReload();
+      notify(ids.length === 1 ? "历史记录已删除。" : `已删除 ${ids.length} 条历史记录。`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "历史删除失败。");
+    }
+  }
+
+  if (!records.length) return <p className="v2-empty">{empty}</p>;
+  return (
+    <div className="v2-delete-manager">
+      <div className="v2-selection-toolbar">
+        <label>
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={() => setSelectedIds(allSelected ? [] : currentIds)}
+          />
+          选择当前全部 {records.length} 条
+        </label>
+        <span>已选择 {effectiveSelected.length} 条</span>
+        <button
+          className="danger"
+          type="button"
+          disabled={!effectiveSelected.length}
+          onClick={() => void deleteRecords(effectiveSelected)}
+        >
+          <Trash2 size={14} />批量删除
+        </button>
+      </div>
+      <div className="v2-record-list">
+        {records.map((record) => (
+          <article key={record.id} className={effectiveSelected.includes(record.id) ? "is-selected" : ""}>
+            <header>
+              <label className="v2-select-work">
+                <input
+                  type="checkbox"
+                  checked={effectiveSelected.includes(record.id)}
+                  onChange={() => toggleSelected(record.id)}
+                  aria-label={`选择 ${formatDate(record.updatedAt)} 的历史记录`}
+                />
+                <span>{record.source === "ai" ? "AI 三版本" : "规则生成"}</span>
+              </label>
+              <time>{formatDate(record.updatedAt)}</time>
+            </header>
+            <p>{record.promptEn}</p>
+            <div className="v2-inline-actions">
+              <button type="button" onClick={() => onRestore(record)}>
+                <RefreshCw size={14} />恢复到编辑器
+              </button>
+              <button className="danger" type="button" onClick={() => void deleteRecords([record.id])}>
+                <Trash2 size={14} />删除
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
 
 function PhraseManager({
-  categories,
-  editor,
-  loading,
-  phraseCategory,
-  phraseSearch,
   phrases,
-  saving,
-  onCategoryChange,
-  onDelete,
-  onEdit,
-  onEditorChange,
-  onInsert,
-  onNew,
-  onSearchChange,
-  onRefresh,
+  onReload,
+  notify,
+  onUse,
 }: {
-  categories: string[];
-  editor: PhraseForm | null;
-  loading: boolean;
-  phraseCategory: string;
-  phraseSearch: string;
   phrases: PhraseSnippet[];
-  saving: boolean;
-  onCategoryChange: (value: string) => void;
-  onDelete: (id: string) => void;
-  onEdit: (form: PhraseForm) => void;
-  onEditorChange: (form: PhraseForm | null) => void;
-  onInsert: (content: string) => void;
-  onNew: () => void;
-  onSearchChange: (value: string) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onRefresh: () => void;
-}){
-    <section className="manager-section">
-      <div className="manager-heading">
-        <div>
-          <span className="section-kicker">PHRASES</span>
-          <h3>鎴戠殑甯哥敤璇?/h3>
-        </div>
-        <button className="small-primary-button" type="button" onClick={onNew}><Plus size={13} /> 鏂板缓</button>
-      </div>
-      <div className="manager-toolbar">
-        <label className="search-field">
-          <Search size={13} />
-          <input value={phraseSearch} onChange={(event) => onSearchChange(event.target.value)} placeholder="鎼滅储鍚嶇О銆佸垎绫绘垨鍐呭" />
+  onReload: () => Promise<void>;
+  notify: (message: string) => void;
+  onUse: (phrase: PhraseLibraryItem) => void;
+}) {
+  const [editing, setEditing] = useState<PhraseSnippet | null>(null);
+  const [query, setQuery] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      name: String(data.get("name")),
+      category: String(data.get("category") || "未分类"),
+      content: String(data.get("content")),
+      sortOrder: Number(data.get("sortOrder") || 0),
+    };
+    try {
+      await requestJson(editing ? `/api/phrases/${editing.id}` : "/api/phrases", {
+        method: editing ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
+      setEditing(null);
+      form.reset();
+      await onReload();
+      notify("常用词已保存。");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "保存失败。");
+    }
+  }
+  const visible = phrases.filter((item) =>
+    `${item.name} ${item.category} ${item.content}`.toLowerCase().includes(query.toLowerCase()),
+  );
+  return (
+    <div className="v2-manager">
+      <form onSubmit={submit} key={editing?.id ?? "new"}>
+        <input name="name" defaultValue={editing?.name} placeholder="名称" required maxLength={80} />
+        <input name="category" defaultValue={editing?.category ?? "未分类"} placeholder="分类" required />
+        <input name="content" defaultValue={editing?.content} placeholder="词语或短语内容" required maxLength={500} />
+        <label className="v2-sort-field">
+          <span>排序</span>
+          <input
+            name="sortOrder"
+            type="number"
+            min={0}
+            step={1}
+            defaultValue={Math.max(0, editing?.sortOrder ?? 0)}
+            placeholder="最小为 0"
+          />
+          <small>数字越小越靠前，最小为 0</small>
         </label>
-        <button className="icon-button" type="button" aria-label="鍒锋柊" onClick={() => window.location.reload()}><RefreshCw size={14} /></button>
-        <button className="icon-button" type="button" aria-label="刷新" onClick={onRefresh}><RefreshCw size={14} /></button>
-      <div className="category-tabs">
-        {categories.map((category) => (
-          <button className={category === phraseCategory ? "is-active" : ""} key={category} type="button" onClick={() => onCategoryChange(category)}>
-            {category}
-          </button>
+        <button className="v2-primary" type="submit"><Save size={14} />{editing ? "更新" : "保存"}</button>
+      </form>
+      <input className="v2-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索名称、分类或内容" />
+      <div className="v2-phrase-list">
+        {visible.map((phrase) => (
+          <article key={phrase.id}>
+            <div><small>{phrase.category}</small><strong>{phrase.name}</strong><p>{phrase.content}</p></div>
+            <DraggablePhrase phrase={personalPhraseItem(phrase)} onUse={onUse} compact />
+            <button type="button" onClick={() => setEditing(phrase)}>编辑</button>
+            <button
+              type="button"
+              onClick={async () => {
+                await requestJson(`/api/phrases/${phrase.id}`, { method: "DELETE" });
+                await onReload();
+              }}
+            ><Trash2 size={14} /></button>
+          </article>
         ))}
       </div>
+    </div>
+  );
+}
 
-      {editor ? (
-        <form className="phrase-editor" onSubmit={onSubmit}>
-          <div className="editor-form-heading">
-            <strong>{editor.id ? "缂栬緫甯哥敤璇? : "鏂板缓甯哥敤璇?}</strong>
-            <button type="button" aria-label="鍏抽棴缂栬緫" onClick={() => onEditorChange(null)}><X size={13} /></button>
-          </div>
-          <div className="form-row">
-            <label>
-              鍚嶇О
-              <input required maxLength={80} value={editor.name} onChange={(event) => onEditorChange({ ...editor, name: event.target.value })} />
-            </label>
-            <label>
-              鍒嗙被
-              <input required maxLength={50} value={editor.category} onChange={(event) => onEditorChange({ ...editor, category: event.target.value })} />
-            </label>
-          </div>
-          <label>
-            璇嶈鎴栫煭璇?            <textarea required maxLength={500} value={editor.content} onChange={(event) => onEditorChange({ ...editor, content: event.target.value })} />
-          </label>
-          <label>
-            鎺掑簭鍊?            <input type="number" min={-100000} max={100000} value={editor.sortOrder} onChange={(event) => onEditorChange({ ...editor, sortOrder: Number(event.target.value) })} />
-          </label>
-          <button className="small-primary-button" type="submit" disabled={saving}>
-            {saving ? <LoaderCircle className="spin" size={13} /> : <Save size={13} />} 淇濆瓨
+function LibraryManager({
+  favorites,
+  folders,
+  search,
+  folderFilter,
+  revisionTarget,
+  revisions,
+  onSearch,
+  onFolderFilter,
+  onReload,
+  onRestore,
+  onRevisions,
+  onSaveRevision,
+  onExport,
+  onDeleted,
+  notify,
+}: {
+  favorites: FavoriteRecord[];
+  folders: FolderRecord[];
+  search: string;
+  folderFilter: string;
+  revisionTarget: FavoriteRecord | null;
+  revisions: RevisionRecord[];
+  onSearch: (value: string) => void;
+  onFolderFilter: (value: string) => void;
+  onReload: () => Promise<void>;
+  onRestore: (snapshot: unknown) => void;
+  onRevisions: (favorite: FavoriteRecord) => Promise<void>;
+  onSaveRevision: (favorite: FavoriteRecord) => Promise<void>;
+  onExport: (format: "txt" | "markdown" | "json", payload: Record<string, unknown>) => void;
+  onDeleted: (ids: string[]) => void;
+  notify: (message: string) => void;
+}) {
+  const [folderName, setFolderName] = useState("");
+  const [renamingFolder, setRenamingFolder] = useState(false);
+  const [folderRename, setFolderRename] = useState("");
+  const [editingFavorite, setEditingFavorite] = useState<FavoriteRecord | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const selectedFolder = folders.find((folder) => folder.id === folderFilter);
+  const currentIds = favorites.map((favorite) => favorite.id);
+  const effectiveSelected = selectedIds.filter((id) => currentIds.includes(id));
+  const allSelected = favorites.length > 0 && effectiveSelected.length === favorites.length;
+
+  async function updateFavorite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingFavorite) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    try {
+      await requestJson(`/api/favorites/${editingFavorite.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: String(data.get("title")),
+          note: String(data.get("note") ?? ""),
+          folderId: String(data.get("folderId") ?? "") || null,
+        }),
+      });
+      setEditingFavorite(null);
+      await onReload();
+      notify("作品信息已更新。");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "作品信息更新失败。");
+    }
+  }
+
+  async function renameFolder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedFolder) return;
+    try {
+      await requestJson(`/api/folders/${selectedFolder.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: folderRename }),
+      });
+      setRenamingFolder(false);
+      await onReload();
+      notify("文件夹已重命名。");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "文件夹重命名失败。");
+    }
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  }
+
+  async function deleteFavorites(ids: string[]) {
+    if (!ids.length) return;
+    const favorite = ids.length === 1 ? favorites.find((item) => item.id === ids[0]) : null;
+    const confirmed = window.confirm(
+      ids.length === 1
+        ? `确定删除作品“${favorite?.title ?? "未命名作品"}”吗？它的全部修订也会永久删除。`
+        : `确定批量删除已选择的 ${ids.length} 个作品吗？这些作品的全部修订也会永久删除。`,
+    );
+    if (!confirmed) return;
+    try {
+      if (ids.length === 1) {
+        await requestJson(`/api/favorites/${ids[0]}`, { method: "DELETE" });
+      } else {
+        await requestJson("/api/favorites/batch", {
+          method: "DELETE",
+          body: JSON.stringify({ ids }),
+        });
+      }
+      if (editingFavorite && ids.includes(editingFavorite.id)) setEditingFavorite(null);
+      setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
+      onDeleted(ids);
+      await onReload();
+      notify(ids.length === 1 ? "作品已删除。" : `已删除 ${ids.length} 个作品。`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "作品删除失败。");
+    }
+  }
+
+  return (
+    <div className="v2-manager">
+      <div className="v2-library-tools">
+        <input
+          value={search}
+          onChange={(event) => {
+            setSelectedIds([]);
+            onSearch(event.target.value);
+          }}
+          placeholder="按标题搜索"
+        />
+        <select
+          value={folderFilter}
+          onChange={(event) => {
+            setSelectedIds([]);
+            onFolderFilter(event.target.value);
+          }}
+        >
+          <option value="">全部文件夹</option>
+          <option value="unfiled">未分类</option>
+          {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name} ({folder.itemCount})</option>)}
+        </select>
+        <button type="button" onClick={() => void onReload()}><RefreshCw size={14} />筛选</button>
+      </div>
+      <form
+        className="v2-folder-form"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          await requestJson("/api/folders", {
+            method: "POST",
+            body: JSON.stringify({ name: folderName }),
+          });
+          setFolderName("");
+          await onReload();
+          notify("文件夹已创建。");
+        }}
+      >
+        <input value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="新文件夹名称" required />
+        <button type="submit"><FolderPlus size={14} />新建</button>
+      </form>
+      {!!folderFilter && folderFilter !== "unfiled" && (
+        <div className="v2-folder-actions">
+          <button type="button" onClick={() => onExport("json", { scope: "folder", folderId: folderFilter })}><Download size={14} />导出文件夹 JSON</button>
+          <button
+            type="button"
+            onClick={() => {
+              setFolderRename(selectedFolder?.name ?? "");
+              setRenamingFolder(true);
+            }}
+          >
+            重命名文件夹
           </button>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!window.confirm("删除文件夹？其中作品会移到未分类，不会被删除。")) return;
+              await requestJson(`/api/folders/${folderFilter}`, { method: "DELETE" });
+              onFolderFilter("");
+              await onReload();
+            }}
+          ><Trash2 size={14} />删除文件夹</button>
+        </div>
+      )}
+      {renamingFolder && selectedFolder && (
+        <form className="v2-folder-form" onSubmit={renameFolder}>
+          <input
+            value={folderRename}
+            onChange={(event) => setFolderRename(event.target.value)}
+            maxLength={120}
+            required
+            aria-label="新的文件夹名称"
+          />
+          <button type="submit">保存名称</button>
+          <button type="button" onClick={() => setRenamingFolder(false)}>取消</button>
         </form>
-      ) : null}
-
-      {loading ? <LoadingState label="姝ｅ湪鍔犺浇甯哥敤璇?" /> : phrases.length ? ("
-        <div className="manager-card-list">
-          {phrases.map((phrase) => (
-            <article className="phrase-manager-card" key={phrase.id}>
-              <button className="phrase-main" type="button" onClick={() => onInsert(phrase.content)}>
-                <span className="category-label">{phrase.category}</span>
-                <strong>{phrase.name}</strong>
-                <p>{phrase.content}</p>
-                <small><Plus size={10} /> 鐐瑰嚮鎻掑叆鍒板綋鍓嶅厜鏍?/small>
-              </button>
-              <div className="card-actions">
-                <button type="button" aria-label={`缂栬緫 ${phrase.name}`} onClick={() => onEdit({ id: phrase.id, name: phrase.name, category: phrase.category, content: phrase.content, sortOrder: phrase.sortOrder })}><Pencil size={13} /></button>
-                <button type="button" aria-label={`鍒犻櫎 ${phrase.name}`} onClick={() => onDelete(phrase.id)}><Trash2 size={13} /></button>
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : <EmptyState icon={<Tags size={20} />} title="杩樻病鏈夊父鐢ㄨ瘝" description="淇濆瓨甯哥敤鐨勯鏍笺€佺伅鍏夋垨鏋勫浘鐭锛屼箣鍚庣偣鍑诲嵆鍙彃鍏?Prompt銆? /">}
-
-      <div className="sample-phrases">
-        <span>鍐呯疆绀轰緥锛堢偣鍑荤洿鎺ユ彃鍏ワ級</span>
-        <div className="phrase-cloud">
-          {CURATED_PHRASES.map((phrase) => <button className="phrase-chip" key={phrase.id} type="button" onClick={() => onInsert(phrase.content)}><Plus size={11} />{phrase.name}</button>)}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function HistoryManager({
-  items,
-  loading,
-  page,
-  total,
-  onClear,
-  onDelete,
-  onPage,
-  onRestore,
-}: {
-  items: PromptRecord[];
-  loading: boolean;
-  page: number;
-  total: number;
-  onClear: () => void;
-  onDelete: (id: string) => void;
-  onPage: (page: number) => void;
-  onRestore: (item: PromptRecord) => void;
-}) {
-  return (
-    <section className="manager-section">
-      <div className="manager-heading">
-        <div><span className="section-kicker">HISTORY 路 {total}/100</span><h3>鐢熸垚鍘嗗彶</h3></div>
-        {total > 0 ? <button className="secondary-button" type="button" onClick={onClear}><Trash2 size={12} /> 娓呯┖</button> : null}
-      </div>
-      {loading ? <LoadingState label="姝ｅ湪鍔犺浇鍘嗗彶璁板綍" /> : items.length ? (
-        <div className="manager-card-list">
-          {items.map((item) => <PromptRecordCard item={item} key={item.id} onDelete={() => onDelete(item.id)} onRestore={() => onRestore(item)} />)}
-        </div>
-      ) : <EmptyState icon={<History size={20} />} title="杩樻病鏈夌敓鎴愯褰?" description="姣忔瑙勫垯鎴?AI 鐢熸垚鎴愬姛鍚庨兘浼氳嚜鍔ㄤ繚瀛橈紝鐩稿悓 Prompt 浼氳嚜鍔ㄥ幓閲嶃€?" />}
-      <Pagination page={page} total={total} onPage={onPage} />
-    </section>
-  );
-}
-
-function PromptRecordCard({
-  item,
-  onDelete,
-  onRestore,
-  noteEditor,
-}: {
-  item: PromptRecord;
-  onDelete: () => void;
-  onRestore: () => void;
-  noteEditor?: React.ReactNode;
-}) {
-  return (
-    <article className="prompt-record-card">
-      <div className="record-top">
-        <span className="record-source"><Sparkles size={10} /> {sourceLabel(item.source)}</span>
-        <time>{formatDate(item.updatedAt ?? item.createdAt)}</time>
-      </div>
-      <p className="record-prompt">{item.promptEn || item.promptZh}</p>
-      {noteEditor}
-      <div className="record-actions">
-        <button className="restore-button" type="button" onClick={onRestore}><RotateCcw size={11} /> 鎭㈠鍒扮紪杈戝櫒</button>
-        <button type="button" aria-label="鍒犻櫎" onClick={onDelete}><Trash2 size={13} /></button>
-      </div>
-    </article>
-  );
-}
-
-function FavoritesManager({
-  editing,
-  items,
-  loading,
-  page,
-  total,
-  onDelete,
-  onEdit,
-  onEditChange,
-  onPage,
-  onRestore,
-  onSubmit,
-}: {
-  editing: { id: string; note: string } | null;
-  items: PromptRecord[];
-  loading: boolean;
-  page: number;
-  total: number;
-  onDelete: (id: string) => void;
-  onEdit: (value: { id: string; note: string } | null) => void;
-  onEditChange: (value: { id: string; note: string } | null) => void;
-  onPage: (page: number) => void;
-  onRestore: (item: PromptRecord) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  return (
-    <section className="manager-section">
-      <div className="manager-heading">
-        <div><span className="section-kicker">FAVORITES 路 {total}</span><h3>鏀惰棌涓庡娉?/h3></div>
-        <span className="count-badge">鈭?/span>
-      </div>
-      {loading ? <LoadingState label="姝ｅ湪鍔犺浇鏀惰棌" /> : items.length ? (
-        <div className="manager-card-list">
-          {items.map((item) => (
-            <PromptRecordCard
-              item={item}
-              key={item.id}
-              onDelete={() => onDelete(item.id)}
-              onRestore={() => onRestore(item)}
-              noteEditor={
-                editing?.id === item.id ? (
-                  <form className="record-note-editor" onSubmit={onSubmit}>
-                    <textarea
-                      maxLength={1000}
-                      value={editing.note}
-                      onChange={(event) => onEditChange({ ...editing, note: event.target.value })}
-                    />
-                    <div>
-                      <button type="button" onClick={() => onEditChange(null)}>鍙栨秷</button>
-                      <button type="submit">淇濆瓨澶囨敞</button>
-                    </div>
-                  </form>
-                ) : (
-                  <button className="record-note" type="button" onClick={() => onEdit({ id: item.id, note: item.note ?? "" })}>
-                    <Pencil size={10} /> {item.note || "鐐瑰嚮娣诲姞澶囨敞"}
-                  </button>
-                )
-              }
+      )}
+      {!!favorites.length && (
+        <div className="v2-selection-toolbar">
+          <label>
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={() => setSelectedIds(allSelected ? [] : currentIds)}
             />
-          ))}
+            选择当前全部 {favorites.length} 个作品
+          </label>
+          <span>已选择 {effectiveSelected.length} 个</span>
+          <button
+            className="danger"
+            type="button"
+            disabled={!effectiveSelected.length}
+            onClick={() => void deleteFavorites(effectiveSelected)}
+          >
+            <Trash2 size={14} />批量删除
+          </button>
         </div>
-      ) : <EmptyState icon={<Heart size={20} />} title="杩樻病鏈夋敹钘?" description="鍦ㄧ敓鎴愮粨鏋滄梺鐐瑰嚮鈥滄敹钘忓苟澶囨敞鈥濓紝鏀惰棌鏁伴噺娌℃湁涓婇檺銆?" />}
-      <Pagination page={page} total={total} onPage={onPage} />
-    </section>
+      )}
+      {!!effectiveSelected.length && (
+        <div className="v2-selected-export">
+          <span>已选择 {effectiveSelected.length} 个作品</span>
+          {(["txt", "markdown", "json"] as const).map((format) => (
+            <button
+              key={format}
+              type="button"
+              onClick={() => onExport(format, { scope: "selected", favoriteIds: effectiveSelected })}
+            >
+              导出 {format === "markdown" ? "MD" : format.toUpperCase()}
+            </button>
+          ))}
+          <button type="button" onClick={() => setSelectedIds([])}>清除选择</button>
+        </div>
+      )}
+      <div className="v2-record-list">
+        {favorites.map((favorite) => (
+          <article key={favorite.id}>
+            <header>
+              <label className="v2-select-work">
+                <input
+                  type="checkbox"
+                  checked={effectiveSelected.includes(favorite.id)}
+                  onChange={() => toggleSelected(favorite.id)}
+                  aria-label={`选择作品 ${favorite.title}`}
+                />
+                <strong>{favorite.title}</strong>
+              </label>
+              <span>revision {favorite.revisionCount}</span>
+            </header>
+            <p>{favorite.promptEn}</p>
+            {favorite.note && <small>{favorite.note}</small>}
+            <div className="v2-inline-actions">
+              <button type="button" onClick={() => onRestore(favorite.snapshot)}>恢复</button>
+              <button type="button" onClick={() => setEditingFavorite(favorite)}>编辑信息 / 移动</button>
+              <button type="button" onClick={() => void onSaveRevision(favorite)}>当前内容另存修订</button>
+              <button type="button" onClick={() => void onRevisions(favorite)}>时间线</button>
+              <button type="button" onClick={() => onExport("markdown", { scope: "favorite", favoriteId: favorite.id })}>导出 MD</button>
+              <button className="danger" type="button" onClick={() => void deleteFavorites([favorite.id])}>
+                <Trash2 size={14} />删除作品
+              </button>
+            </div>
+          </article>
+        ))}
+        {!favorites.length && <p className="v2-empty">没有匹配的收藏作品。</p>}
+      </div>
+      {editingFavorite && (
+        <form className="v2-favorite-edit" onSubmit={updateFavorite}>
+          <h3>编辑“{editingFavorite.title}”</h3>
+          <label>
+            标题
+            <input name="title" defaultValue={editingFavorite.title} required maxLength={160} />
+          </label>
+          <label>
+            备注
+            <textarea name="note" defaultValue={editingFavorite.note} maxLength={1000} />
+          </label>
+          <label>
+            文件夹
+            <select name="folderId" defaultValue={editingFavorite.folderId ?? ""}>
+              <option value="">未分类</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>{folder.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="v2-inline-actions">
+            <button type="submit">保存信息</button>
+            <button type="button" onClick={() => setEditingFavorite(null)}>取消</button>
+          </div>
+        </form>
+      )}
+      {revisionTarget && (
+        <section className="v2-revisions">
+          <h3>“{revisionTarget.title}”修订时间线</h3>
+          {revisions.map((revision) => (
+            <button key={revision.id} type="button" onClick={() => onRestore(revision.snapshot)}>
+              <span>revision {revision.revisionNo}</span>
+              <time>{formatDate(revision.createdAt)}</time>
+              <small>查看 / 恢复</small>
+            </button>
+          ))}
+        </section>
+      )}
+    </div>
   );
 }
 
-function SubmissionManager({
-  items,
-  loading,
-  page,
-  total,
-  onPage,
-  onRestore,
-}: {
-  items: MidjourneySubmission[];
-  loading: boolean;
-  page: number;
-  total: number;
-  onPage: (page: number) => void;
-  onRestore: (item: MidjourneySubmission) => void;
-}) {
+function SubmissionList({ items }: { items: SubmissionRecord[] }) {
+  if (!items.length) return <p className="v2-empty">还没有文本推送记录。</p>;
   return (
-    <section className="manager-section">
-      <div className="manager-heading">
-        <div><span className="section-kicker">DIRECT SUBMISSIONS 路 {total}</span><h3>Midjourney 鎻愪氦璁板綍</h3></div>
-        <Send size={17} />
-      </div>
-      <div className="inline-notice">
-        <ShieldCheck size={14} />
-        <span>鎻愪氦璁板綍鐙珛淇濆瓨锛屼笉鍗犵敤 100 鏉?Prompt 鍘嗗彶棰濆害銆?/span>
-      </div>
-      {loading ? <LoadingState label="姝ｅ湪鍔犺浇鎻愪氦璁板綍" /> : items.length ? (
-        <div className="manager-card-list">
-          {items.map((item) => (
-            <article className="prompt-record-card" key={item.id}>
-              <div className="record-top">
-                <span className={`submission-badge is-${item.status}`}>
-                  {item.status === "sent" ? <Check size={10} /> : item.status === "failed" ? <CircleAlert size={10} /> : <LoaderCircle size={10} />}
-                  {item.status}
-                </span>
-                <time>{formatDate(item.updatedAt ?? item.createdAt)}</time>
-              </div>
-              <p className="record-prompt">{item.promptEn || item.promptZh}</p>
-              {item.errorMessage ? <p className="submission-error">{item.errorMessage}</p> : null}
-              <div className="record-actions">
-                <button className="restore-button" type="button" onClick={() => onRestore(item)}><RotateCcw size={11} /> 鎭㈠杈撳嚭</button>
-                <span className="record-source">{sourceLabel(item.source)}</span>
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : <EmptyState icon={<Send size={20} />} title="杩樻病鏈夋彁浜よ褰?" description="閰嶇疆骞跺惎鐢?Discord Webhook 鎴栬嚜瀹氫箟 HTTP 绔偣鍚庯紝鍗冲彲浠庣粨鏋滃尯鐩存帴鎻愪氦銆?" />}
-      <Pagination page={page} total={total} onPage={onPage} />
-    </section>
-  );
-}
-
-type ConfigKind = "ai" | "translation" | "midjourney";
-
-function ConfigList({
-  configs,
-  kind,
-  busy,
-  onActivate,
-  onDelete,
-  onTest,
-}: {
-  configs: PublicConfig[];
-  kind: ConfigKind;
-  busy: string | null;
-  onActivate: (kind: ConfigKind, id: string) => void;
-  onDelete: (kind: ConfigKind, id: string) => void;
-  onTest: (kind: ConfigKind, id: string) => void;
-}) {
-  if (!configs.length) return <p className="config-empty">灏氭湭淇濆瓨閰嶇疆</p>;
-  return (
-    <div className="service-config-list">
-      {configs.map((config) => (
-        <article key={config.id}>
-          <span className={config.isActive ? "is-active" : ""}>{config.isActive ? <Check size={12} /> : <KeyRound size={12} />}</span>
-          <div>
-            <strong>{config.label}{config.isActive ? "（当前启用）" : ""}</strong>
-            <small>{config.provider}{config.model ? ` 路 ${config.model}` : ""} 路 {config.apiKeyMasked || "鏃犻渶瀵嗛挜"}</small>
-          </div>
-          <div>
-            {!config.isActive ? (
-              <button type="button" disabled={Boolean(busy)} onClick={() => onActivate(kind, config.id)} title="鍚敤">鍚敤</button>
-            ) : null}
-            <button type="button" disabled={Boolean(busy)} onClick={() => onTest(kind, config.id)} title={kind === "midjourney" ? "测试配置入口" : "测试连接"}>
-              {busy === `test-${config.id}` ? <LoaderCircle className="spin" size={12} /> : <RefreshCw size={12} />}
-            </button>
-            <button type="button" disabled={Boolean(busy)} onClick={() => onDelete(kind, config.id)} title="鍒犻櫎">
-              {busy === `delete-${config.id}` ? <LoaderCircle className="spin" size={12} /> : <Trash2 size={12} />}
-            </button>
-          </div>
+    <div className="v2-record-list">
+      {items.map((item) => (
+        <article key={item.id}>
+          <header><span className={`v2-status ${item.status}`}>{item.status}</span><time>{formatDate(item.updatedAt)}</time></header>
+          <p>{item.promptEn}</p>
+          {item.errorMessage && <small>{item.errorMessage}</small>}
         </article>
       ))}
     </div>
@@ -2407,174 +2126,467 @@ function ConfigList({
 }
 
 function SettingsManager({
-  aiForm,
-  aiConfigs,
-  busy,
-  loading,
-  midjourneyForm,
-  midjourneyConfigs,
-  translationForm,
-  translationConfigs,
-  onActivate,
-  onAiChange,
-  onAiSubmit,
-  onDelete,
-  onMidjourneyChange,
-  onMidjourneySubmit,
-  onTest,
-  onTranslationChange,
-  onTranslationSubmit,
+  ai,
+  translation,
+  push,
+  siteServices,
+  onReload,
+  notify,
 }: {
-  aiForm: AiConfigForm;
-  aiConfigs: PublicConfig[];
-  busy: string | null;
-  loading: boolean;
-  midjourneyForm: MidjourneyConfigForm;
-  midjourneyConfigs: PublicConfig[];
-  translationForm: TranslationConfigForm;
-  translationConfigs: PublicConfig[];
-  onActivate: (kind: ConfigKind, id: string) => void;
-  onAiChange: (form: AiConfigForm) => void;
-  onAiSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onDelete: (kind: ConfigKind, id: string) => void;
-  onMidjourneyChange: (form: MidjourneyConfigForm) => void;
-  onMidjourneySubmit: (event: FormEvent<HTMLFormElement>) => void;
-  onTest: (kind: ConfigKind, id: string) => void;
-  onTranslationChange: (form: TranslationConfigForm) => void;
-  onTranslationSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  ai: PublicConfig[];
+  translation: PublicConfig[];
+  push: PublicConfig[];
+  siteServices: SiteServiceSummary | null;
+  onReload: () => Promise<void>;
+  notify: (message: string) => void;
 }) {
-  const listProps = { busy, onActivate, onDelete, onTest };
+  const personalAiActive = ai.some((item) => item.isActive);
+  const personalTranslationActive = translation.some((item) => item.isActive);
   return (
-    <section className="manager-section settings-section">
-      <div className="settings-intro">
-        <span><ShieldCheck size={17} /></span>
+    <div className="v2-settings">
+      <SharedServicesOverview
+        services={siteServices}
+        aiOverridden={personalAiActive}
+        translationOverridden={personalTranslationActive}
+        notify={notify}
+      />
+      <ConfigSection
+        title="个人 AI 配置"
+        description="可选。启用后覆盖站点 Ollama；删除或停用后自动恢复站点模型。"
+        kind="ai"
+        items={ai}
+        sharedAvailable={Boolean(siteServices?.ai.configured)}
+        onReload={onReload}
+        notify={notify}
+      />
+      <ConfigSection
+        title="个人翻译配置"
+        description="可选。个人服务优先，失败时自动回退到共享 LibreTranslate。"
+        kind="translation"
+        items={translation}
+        sharedAvailable={Boolean(siteServices?.translation.configured)}
+        onReload={onReload}
+        notify={notify}
+      />
+      <ConfigSection
+        title="文本推送入口"
+        description="Discord Webhook 或自定义 HTTP，仅推送文本，不是官方 Midjourney 下单。"
+        kind="push"
+        items={push}
+        sharedAvailable={false}
+        onReload={onReload}
+        notify={notify}
+      />
+    </div>
+  );
+}
+
+function SharedServicesOverview({
+  services,
+  aiOverridden,
+  translationOverridden,
+  notify,
+}: {
+  services: SiteServiceSummary | null;
+  aiOverridden: boolean;
+  translationOverridden: boolean;
+  notify: (message: string) => void;
+}) {
+  const [testing, setTesting] = useState<"ai" | "translation" | null>(null);
+
+  async function testService(service: "ai" | "translation") {
+    setTesting(service);
+    try {
+      const result = await requestJson<{ message: string; latencyMs: number }>(
+        "/api/site-services/test",
+        {
+          method: "POST",
+          body: JSON.stringify({ service }),
+        },
+      );
+      notify(`${result.message}（${formatLatency(result.latencyMs)}）`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "共享服务测试失败。");
+    } finally {
+      setTesting(null);
+    }
+  }
+
+  return (
+    <section className="v2-shared-services">
+      <header>
         <div>
-          <h3>鏈嶅姟涓庡瘑閽?/h3>
-          <p>瀵嗛挜鐢辨湇鍔″櫒浣跨敤 AES-256-GCM 鍔犲瘑淇濆瓨锛屾祻瑙堝櫒鍙細鐪嬪埌鑴辨晱缁撴灉銆傚垹闄ゅ悗鏃犳硶鎭㈠銆?/p>
+          <span className="v2-settings-eyebrow">
+            <ShieldCheck size={14} /> SITE SERVICES
+          </span>
+          <h3>站点共享服务</h3>
+          <p>管理员统一维护，密钥不会发送到浏览器；没有个人覆盖时自动使用。</p>
         </div>
-      </div>
-      {loading ? <LoadingState label="姝ｅ湪鍔犺浇鏈嶅姟閰嶇疆" /> : null}
+        <span className="v2-secure-badge">服务端加密 / 脱敏</span>
+      </header>
 
-      <form className="settings-card" onSubmit={onMidjourneySubmit}>
-        <div className="settings-card-heading">
-          <span><Send size={15} /></span>
-          <div><strong>Midjourney 鐩存帴鎻愪氦</strong><small>Discord Webhook 鎴栬嚜瀹氫箟 HTTP</small></div>
+      {!services ? (
+        <div className="v2-service-loading">
+          <LoaderCircle className="spin" size={18} /> 正在读取服务状态…
         </div>
-        <ConfigList configs={midjourneyConfigs} kind="midjourney" {...listProps} />
-        <div className="form-row">
-          <label>
-            閰嶇疆鍚嶇О
-            <input required maxLength={80} value={midjourneyForm.label} onChange={(event) => onMidjourneyChange({ ...midjourneyForm, label: event.target.value })} />
-          </label>
-          <label>
-            绫诲瀷
-            <select value={midjourneyForm.provider} onChange={(event) => onMidjourneyChange({ ...midjourneyForm, provider: event.target.value as MidjourneyConfigForm["provider"] })}>
-              <option value="discord_webhook">Discord Webhook</option>
-              <option value="custom_http">鑷畾涔?HTTP</option>
-            </select>
-          </label>
-        </div>
-        <label>
-          Endpoint
-          <input required type="url" value={midjourneyForm.endpoint} onChange={(event) => onMidjourneyChange({ ...midjourneyForm, endpoint: event.target.value })} placeholder={midjourneyForm.provider === "discord_webhook" ? "https://discord.com/api/webhooks/..." : "https://example.com/api/midjourney"} />
-        </label>
-        <label>
-          API Key <small>鍙€?/small>
-          <input type="password" autoComplete="new-password" value={midjourneyForm.apiKey} onChange={(event) => onMidjourneyChange({ ...midjourneyForm, apiKey: event.target.value })} />
-        </label>
-        <label className="config-active-check">
-          <input type="checkbox" checked={midjourneyForm.isActive} onChange={(event) => onMidjourneyChange({ ...midjourneyForm, isActive: event.target.checked })} />
-          淇濆瓨鍚庣珛鍗冲惎鐢?        </label>
-        <div className="settings-footer">
-          <span><CircleAlert size={12} />鈥滄祴璇曗€濅細鐪熷疄鍙戦€佷竴鏉℃祴璇曟秷鎭€?/span>
-          <button className="small-primary-button" type="submit" disabled={Boolean(busy)}>
-            {busy === "save-midjourney" ? <LoaderCircle className="spin" size={13} /> : <Save size={13} />} 淇濆瓨鎻愪氦閰嶇疆
-          </button>
-        </div>
-      </form>
+      ) : (
+        <div className="v2-service-grid">
+          <article className="v2-service-card ai">
+            <header>
+              <span className="v2-service-icon"><Bot size={20} /></span>
+              <div>
+                <small>AI 生成</small>
+                <strong>{services.ai.configured ? services.ai.service : "未配置"}</strong>
+              </div>
+              <span className={services.ai.configured ? "ready" : "missing"}>
+                {aiOverridden
+                  ? "个人配置覆盖中"
+                  : services.ai.configured
+                    ? "当前默认"
+                    : "不可用"}
+              </span>
+            </header>
+            {services.ai.configured ? (
+              <>
+                <dl>
+                  <div><dt>模型</dt><dd>{services.ai.model}</dd></div>
+                  <div><dt>接口</dt><dd>{services.ai.endpoint}</dd></div>
+                  <div><dt>超时</dt><dd>{formatLatency(services.ai.timeoutMs)}</dd></div>
+                  <div><dt>认证</dt><dd>{services.ai.apiKeyConfigured ? "已配置" : "无"}</dd></div>
+                </dl>
+                <p>用于“AI 三版本”，返回简洁、详细、实验性结构化 Prompt。</p>
+                <button
+                  type="button"
+                  disabled={testing !== null}
+                  onClick={() => void testService("ai")}
+                >
+                  {testing === "ai" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
+                  {testing === "ai" ? "模型测试中…" : "测试 AI 连接"}
+                </button>
+              </>
+            ) : (
+              <p className="v2-service-missing">请管理员配置 SITE_AI_* 环境变量。</p>
+            )}
+          </article>
 
-      <form className="settings-card" onSubmit={onAiSubmit}>
-        <div className="settings-card-heading">
-          <span><Sparkles size={15} /></span>
-          <div><strong>AI 妯″瀷</strong><small>鐢ㄤ簬缁撴瀯鍖?AI 鐢熸垚</small></div>
+          <article className="v2-service-card translation">
+            <header>
+              <span className="v2-service-icon"><Languages size={20} /></span>
+              <div>
+                <small>自动翻译</small>
+                <strong>{services.translation.configured ? services.translation.service : "未配置"}</strong>
+              </div>
+              <span className={services.translation.configured ? "ready" : "missing"}>
+                {translationOverridden
+                  ? "个人配置优先"
+                  : services.translation.configured
+                    ? "当前默认"
+                    : "不可用"}
+              </span>
+            </header>
+            {services.translation.configured ? (
+              <>
+                <dl>
+                  <div><dt>接口</dt><dd>{services.translation.endpoint}</dd></div>
+                  <div><dt>中文代码</dt><dd>{services.translation.chineseLanguageCode}</dd></div>
+                  <div><dt>认证</dt><dd>{services.translation.apiKeyConfigured ? "已配置" : "无"}</dd></div>
+                  <div><dt>失败策略</dt><dd>保留原文</dd></div>
+                </dl>
+                <p>自动把中文创意和词块翻译为英文；个人服务失败后也会回退到这里。</p>
+                <button
+                  type="button"
+                  disabled={testing !== null}
+                  onClick={() => void testService("translation")}
+                >
+                  {testing === "translation" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
+                  {testing === "translation" ? "翻译测试中…" : "测试翻译连接"}
+                </button>
+              </>
+            ) : (
+              <p className="v2-service-missing">请管理员配置 SHARED_LIBRETRANSLATE_* 环境变量。</p>
+            )}
+          </article>
         </div>
-        <ConfigList configs={aiConfigs} kind="ai" {...listProps} />
-        <div className="form-row">
-          <label>
-            閰嶇疆鍚嶇О
-            <input required value={aiForm.label} onChange={(event) => onAiChange({ ...aiForm, label: event.target.value })} />
-          </label>
-          <label>
-            渚涘簲鍟?            <select value={aiForm.provider} onChange={(event) => onAiChange({ ...aiForm, provider: event.target.value })}>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Claude</option>
-              <option value="gemini">Gemini</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="qwen">閫氫箟鍗冮棶</option>
-              <option value="doubao">璞嗗寘</option>
-              <option value="zhipu">鏅鸿氨</option>
-              <option value="kimi">Kimi</option>
-              <option value="minimax">MiniMax</option>
-              <option value="custom">OpenAI 鍏煎</option>
-            </select>
-          </label>
-        </div>
-        <div className="form-row">
-          <label>
-            妯″瀷鍚?            <input required value={aiForm.model} onChange={(event) => onAiChange({ ...aiForm, model: event.target.value })} />
-          </label>
-          <label>
-            Endpoint <small>棰勮渚涘簲鍟嗗彲鐣欑┖</small>
-            <input type="url" value={aiForm.endpoint} onChange={(event) => onAiChange({ ...aiForm, endpoint: event.target.value })} />
-          </label>
-        </div>
-        <label>
-          API Key
-          <input required type="password" autoComplete="new-password" value={aiForm.apiKey} onChange={(event) => onAiChange({ ...aiForm, apiKey: event.target.value })} />
-        </label>
-        <div className="settings-footer">
-          <span><ShieldCheck size={12} />瀵嗛挜涓嶄細杩斿洖鍒板墠绔€?/span>
-          <button className="small-primary-button" type="submit" disabled={Boolean(busy)}>
-            {busy === "save-ai" ? <LoaderCircle className="spin" size={13} /> : <Save size={13} />} 淇濆瓨 AI 閰嶇疆
-          </button>
-        </div>
-      </form>
-
-      <form className="settings-card" onSubmit={onTranslationSubmit}>
-        <div className="settings-card-heading">
-          <span><Languages size={15} /></span>
-          <div><strong>缈昏瘧鏈嶅姟</strong><small>涓枃鑷敱鏂囨湰鑷姩杞嫳鏂?/small></div>
-        </div>
-        <ConfigList configs={translationConfigs} kind="translation" {...listProps} />
-        <div className="form-row">
-          <label>
-            閰嶇疆鍚嶇О
-            <input required value={translationForm.label} onChange={(event) => onTranslationChange({ ...translationForm, label: event.target.value })} />
-          </label>
-          <label>
-            渚涘簲鍟?            <select value={translationForm.provider} onChange={(event) => onTranslationChange({ ...translationForm, provider: event.target.value })}>
-              <option value="libretranslate">LibreTranslate</option>
-              <option value="deepl">DeepL</option>
-              <option value="google">Google</option>
-            </select>
-          </label>
-        </div>
-        <label>
-          Endpoint <small>浣跨敤榛樿鍦板潃鍙暀绌?/small>
-          <input type="url" value={translationForm.endpoint} onChange={(event) => onTranslationChange({ ...translationForm, endpoint: event.target.value })} />
-        </label>
-        <label>
-          API Key <small>LibreTranslate 鍙€?/small>
-          <input type="password" autoComplete="new-password" value={translationForm.apiKey} onChange={(event) => onTranslationChange({ ...translationForm, apiKey: event.target.value })} />
-        </label>
-        <div className="settings-footer">
-          <span><Languages size={12} />澶辫触鏃朵細淇濈暀鍘熸枃骞舵樉绀鸿鍛娿€?/span>
-          <button className="small-primary-button" type="submit" disabled={Boolean(busy)}>
-            {busy === "save-translation" ? <LoaderCircle className="spin" size={13} /> : <Save size={13} />} 淇濆瓨缈昏瘧閰嶇疆
-          </button>
-        </div>
-      </form>
+      )}
     </section>
   );
 }
-*/
+
+function ConfigSection({
+  title,
+  description,
+  kind,
+  items,
+  sharedAvailable,
+  onReload,
+  notify,
+}: {
+  title: string;
+  description: string;
+  kind: "ai" | "translation" | "push";
+  items: PublicConfig[];
+  sharedAvailable: boolean;
+  onReload: () => Promise<void>;
+  notify: (message: string) => void;
+}) {
+  const defaults =
+    kind === "ai"
+      ? { label: "OpenAI", provider: "openai", model: "gpt-4.1-mini", endpoint: "", apiKey: "" }
+      : kind === "translation"
+        ? { label: "LibreTranslate", provider: "libretranslate", model: "", endpoint: "", apiKey: "" }
+        : { label: "Discord Webhook", provider: "discord_webhook", model: "", endpoint: "", apiKey: "" };
+  const base = kind === "ai" ? "/api/provider-configs" : kind === "translation" ? "/api/translation-configs" : "/api/midjourney-configs";
+  const [selectedProvider, setSelectedProvider] = useState(defaults.provider);
+  const [modelValue, setModelValue] = useState(defaults.model);
+  const [labelValue, setLabelValue] = useState(defaults.label);
+  const [expandedHelpId, setExpandedHelpId] = useState<string | null>(null);
+  const selectedHelp = serviceConfigHelp(selectedProvider);
+  const providerOptions = providersForKind(kind);
+
+  function selectProvider(provider: string) {
+    setSelectedProvider(provider);
+    setLabelValue(providerLabel(provider));
+    if (kind === "ai") setModelValue(defaultModelForProvider(provider));
+  }
+
+  return (
+    <section className="v2-config-section">
+      <header className="v2-config-heading">
+        <div><h3>{title}</h3><p>{description}</p></div>
+        <span>{items.length} 个</span>
+      </header>
+      {!items.length && (
+        <p className="v2-config-empty">
+          {sharedAvailable
+            ? "当前没有个人覆盖，正在使用上方的站点共享服务。"
+            : "暂无配置，可按需添加。"}
+        </p>
+      )}
+      {items.map((item) => (
+        <div className="v2-config-item" key={item.id}>
+          <article>
+            <div>
+              <strong>{item.label}</strong>
+              <small>
+                {[providerLabel(item.provider), item.model, item.endpoint, item.apiKeyMasked || "无密钥"]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </small>
+            </div>
+            {item.isActive && <span>已启用</span>}
+            <button
+              type="button"
+              aria-expanded={expandedHelpId === item.id}
+              onClick={() => setExpandedHelpId((current) => current === item.id ? null : item.id)}
+            >
+              <CircleAlert size={13} />配置说明
+            </button>
+            <button type="button" onClick={async () => {
+                await requestJson(`${base}/${item.id}`, {
+                  method: "PATCH",
+                  body: JSON.stringify({ isActive: !item.isActive }),
+                });
+                await onReload();
+              }}>{item.isActive ? "停用" : "启用"}</button>
+            <button type="button" onClick={async () => {
+              try {
+                await requestJson(`${base}/test`, { method: "POST", body: JSON.stringify({ id: item.id }) });
+                notify("连接测试成功。");
+              } catch (error) {
+                notify(error instanceof Error ? error.message : "连接测试失败。");
+              }
+            }}>测试</button>
+            <button type="button" onClick={async () => {
+              if (!window.confirm(`确定删除配置“${item.label}”吗？`)) return;
+              await requestJson(`${base}/${item.id}`, { method: "DELETE" });
+              await onReload();
+            }} aria-label={`删除配置 ${item.label}`}><Trash2 size={13} /></button>
+          </article>
+          {expandedHelpId === item.id && (
+            <ProviderSetupHelpPanel help={serviceConfigHelp(item.provider)} compact />
+          )}
+        </div>
+      ))}
+      <details className="v2-config-create">
+        <summary><Plus size={14} />添加{kind === "ai" ? "个人模型" : kind === "translation" ? "个人翻译" : "推送入口"}</summary>
+        <ProviderSetupHelpPanel help={selectedHelp} />
+        <form
+          key={`${kind}-${items.length}-${selectedProvider}`}
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const formElement = event.currentTarget;
+            const form = new FormData(formElement);
+            const payload: Record<string, unknown> = {
+              label: String(form.get("label")),
+              provider: String(form.get("provider")),
+              endpoint: String(form.get("endpoint") || "") || undefined,
+              apiKey: String(form.get("apiKey") || ""),
+              isActive: true,
+            };
+            if (kind === "ai") payload.model = String(form.get("model"));
+            try {
+              await requestJson(base, { method: "POST", body: JSON.stringify(payload) });
+              formElement.reset();
+              setSelectedProvider(defaults.provider);
+              setLabelValue(defaults.label);
+              setModelValue(defaults.model);
+              await onReload();
+              notify("配置已加密保存。");
+            } catch (error) {
+              notify(error instanceof Error ? error.message : "配置保存失败。");
+            }
+          }}
+        >
+          <label>配置名称
+            <input
+              name="label"
+              value={labelValue}
+              onChange={(event) => setLabelValue(event.target.value)}
+              placeholder={`例如：我的 ${providerLabel(selectedProvider)}`}
+              required
+            />
+          </label>
+          <label>服务类型
+            <select
+              name="provider"
+              value={selectedProvider}
+              onChange={(event) => selectProvider(event.target.value)}
+            >
+              {providerOptions.map((item) => (
+                <option key={item} value={item}>{providerLabel(item)}</option>
+              ))}
+            </select>
+          </label>
+          {kind === "ai" && (
+            <label>模型名称
+              <input
+                name="model"
+                value={modelValue}
+                onChange={(event) => setModelValue(event.target.value)}
+                placeholder={selectedHelp.modelPlaceholder}
+                required
+              />
+            </label>
+          )}
+          <label className="wide">接口地址
+            <input
+              name="endpoint"
+              defaultValue={defaults.endpoint}
+              type="url"
+              placeholder={selectedHelp.endpointPlaceholder}
+              required={kind === "push" || selectedProvider === "custom"}
+            />
+          </label>
+          <label className="wide">API Key
+            <input
+              name="apiKey"
+              type="password"
+              placeholder={selectedHelp.apiKeyPlaceholder}
+              required={
+                kind === "ai" ||
+                selectedProvider === "deepl" ||
+                selectedProvider === "google"
+              }
+            />
+          </label>
+          <button className="v2-primary" type="submit"><Plus size={14} />保存并启用</button>
+        </form>
+      </details>
+    </section>
+  );
+}
+
+function ProviderSetupHelpPanel({
+  help,
+  compact = false,
+}: {
+  help: ServiceConfigHelp;
+  compact?: boolean;
+}) {
+  return (
+    <section className={`v2-provider-setup-help${compact ? " compact" : ""}`}>
+      <header>
+        <div>
+          <small>开通与填写帮助</small>
+          <strong>{help.title}</strong>
+        </div>
+        <span>保存 → 测试 → 启用</span>
+      </header>
+      <p>{help.summary}</p>
+      <ol>
+        {help.steps.map((step) => <li key={step}>{step}</li>)}
+      </ol>
+      <dl>
+        {help.model && <div><dt>模型名称</dt><dd>{help.model}</dd></div>}
+        <div><dt>接口地址</dt><dd>{help.endpoint}</dd></div>
+        <div><dt>API Key</dt><dd>{help.apiKey}</dd></div>
+      </dl>
+      {help.caution && <p className="v2-provider-caution"><CircleAlert size={14} />{help.caution}</p>}
+      {(help.keyUrl || help.docsUrl) && (
+        <nav aria-label={`${help.title} 官方帮助链接`}>
+          {help.keyUrl && (
+            <a href={help.keyUrl} target="_blank" rel="noreferrer">
+              获取 API Key <ExternalLink size={13} />
+            </a>
+          )}
+          {help.docsUrl && (
+            <a href={help.docsUrl} target="_blank" rel="noreferrer">
+              查看官方文档 <ExternalLink size={13} />
+            </a>
+          )}
+        </nav>
+      )}
+    </section>
+  );
+}
+
+function providerLabel(provider: string): string {
+  return {
+    openai: "OpenAI",
+    anthropic: "Anthropic Claude",
+    gemini: "Google Gemini",
+    deepseek: "DeepSeek",
+    qwen: "通义千问",
+    doubao: "豆包",
+    zhipu: "智谱",
+    kimi: "Kimi",
+    minimax: "MiniMax",
+    custom: "OpenAI 兼容",
+    libretranslate: "LibreTranslate",
+    deepl: "DeepL",
+    google: "Google Translate",
+    discord_webhook: "Discord Webhook",
+    custom_http: "自定义 HTTP",
+  }[provider] ?? provider;
+}
+
+function defaultModelForProvider(provider: string): string {
+  return {
+    openai: "gpt-4.1-mini",
+    anthropic: "claude-sonnet-4-5",
+    gemini: "gemini-2.5-flash",
+    deepseek: "deepseek-v4-flash",
+    qwen: "qwen-plus",
+    doubao: "doubao-seed-2-0-lite-260215",
+    zhipu: "glm-4-flash",
+    kimi: "moonshot-v1-8k",
+    minimax: "MiniMax-M2.1",
+    custom: "",
+  }[provider] ?? "";
+}
+
+function formatLatency(value: number): string {
+  if (value < 1_000) return `${value} ms`;
+  const seconds = value / 1_000;
+  return `${seconds >= 10 ? Math.round(seconds) : seconds.toFixed(1)} 秒`;
+}
+
+function formatDate(value?: string): string {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}

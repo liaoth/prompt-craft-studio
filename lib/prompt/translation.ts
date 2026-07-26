@@ -11,6 +11,7 @@ export const TranslationConfigSchema = z
     provider: TranslationProviderIdSchema,
     apiKey: z.string().max(8_192).optional(),
     endpoint: z.url().optional(),
+    chineseLanguageCode: z.string().trim().min(2).max(16).optional(),
   })
   .strict();
 
@@ -60,8 +61,14 @@ export const TRANSLATION_ADAPTERS: Readonly<
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           q: input.text,
-          source: normalizeLibreLanguage(input.sourceLanguage),
-          target: normalizeLibreLanguage(input.targetLanguage),
+          source: normalizeLibreLanguage(
+            input.sourceLanguage,
+            input.config.chineseLanguageCode,
+          ),
+          target: normalizeLibreLanguage(
+            input.targetLanguage,
+            input.config.chineseLanguageCode,
+          ),
           format: "text",
           ...(input.config.apiKey ? { api_key: input.config.apiKey } : {}),
         }),
@@ -232,8 +239,19 @@ function readNestedString(value: unknown, path: readonly string[]): string | und
   return typeof current === "string" && current.trim() ? current.trim() : undefined;
 }
 
-function normalizeLibreLanguage(language: string): string {
-  if (language === "zh-CN" || language === "zh-TW") return "zh";
+function normalizeLibreLanguage(
+  language: string,
+  chineseLanguageCode = "zh",
+): string {
+  if (
+    language === "zh" ||
+    language === "zh-CN" ||
+    language === "zh-TW" ||
+    language === "zh-Hans" ||
+    language === "zh-Hant"
+  ) {
+    return chineseLanguageCode;
+  }
   return language;
 }
 

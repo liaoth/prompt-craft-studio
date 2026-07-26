@@ -238,6 +238,30 @@ export async function validateMidjourneyEndpointUrl(
 }
 
 /**
+ * SITE_AI_ENDPOINT is controlled by the server operator, so an exact match
+ * may use a loopback, host-gateway, or private Docker-network address.
+ * User-created provider endpoints continue to use the public SSRF policy.
+ */
+export async function validateAiEndpointUrl(
+  endpoint: string,
+): Promise<boolean> {
+  const shared = process.env.SITE_AI_ENDPOINT?.trim();
+  if (shared && normalizeEndpoint(shared) === normalizeEndpoint(endpoint)) {
+    try {
+      const parsed = new URL(endpoint);
+      return (
+        !parsed.username &&
+        !parsed.password &&
+        (parsed.protocol === "http:" || parsed.protocol === "https:")
+      );
+    } catch {
+      return false;
+    }
+  }
+  return validateEndpointUrl(endpoint);
+}
+
+/**
  * LIBRETRANSLATE_URL is controlled by the server operator rather than an end
  * user, so an exact match may point at the private Docker service network.
  * User-supplied translation endpoints still go through the public SSRF policy.

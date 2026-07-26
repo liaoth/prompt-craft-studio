@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  PARAMETER_BY_ID,
   emptyPromptFields,
+  filterUnsupportedParameters,
   generateAiPrompt,
   generateRulePrompt,
+  parameterAvailability,
+  serializeParameters,
+  supportedParameterOptions,
+  testAiProviderConnection,
   translateText,
   validateParameters,
 } from "../lib/prompt";
@@ -33,7 +39,7 @@ describe("rule prompt generation", () => {
     });
 
     expect(draft.promptEn).toBe(
-      "a white cat, running, a rainy street at night, neon rim light, exclude: text --v 7 --ar 16:9 --s 250 --no watermark",
+      "a white cat, running, a rainy street at night, neon rim light --v 7 --ar 16:9 --s 250 --no text, watermark",
     );
     expect(draft.promptEn.indexOf("running")).toBeLessThan(
       draft.promptEn.indexOf("a rainy street"),
@@ -41,7 +47,9 @@ describe("rule prompt generation", () => {
     expect(draft.promptEn.indexOf("a rainy street")).toBeLessThan(
       draft.promptEn.indexOf("neon rim light"),
     );
-    expect(draft.promptEn.endsWith("--no watermark")).toBe(true);
+    expect(draft.bodyEn).not.toContain("exclude:");
+    expect(draft.promptEn.endsWith("--no text, watermark")).toBe(true);
+    expect(draft.promptEn.match(/--no/g)).toHaveLength(1);
   });
 
   it("resolves bilingual presets without translating free text implicitly", () => {
@@ -108,6 +116,45 @@ describe("Midjourney parameter validation", () => {
       code: "unsupported_quality",
       field: "quality",
     });
+    const quality = PARAMETER_BY_ID.get("quality")!;
+    expect(
+      parameterAvailability(quality, {
+        model: "8.1",
+        targetSurface: "web",
+        taskType: "image",
+      }),
+    ).toMatchObject({
+      supported: false,
+      reason: "模型 8.1 不支持 Quality",
+    });
+    expect(
+      filterUnsupportedParameters(
+        { model: "8.1", quality: 4, chaos: 0 },
+        { targetSurface: "web", taskType: "image" },
+      ),
+    ).toEqual({ model: "8.1", chaos: 0 });
+    const serialized = serializeParameters(
+      { model: "8.1", quality: 4, chaos: 5 },
+      { targetSurface: "web", taskType: "image" },
+    );
+    expect(serialized).toContain("--chaos 5");
+    expect(serialized).not.toContain("--quality");
+  });
+
+  it("filters unsupported parameter values from contextual options", () => {
+    const speedMode = PARAMETER_BY_ID.get("speedMode")!;
+    const quality = PARAMETER_BY_ID.get("quality")!;
+    expect(supportedParameterOptions(speedMode, "8.2")).toEqual([
+      "fast",
+      "relax",
+    ]);
+    expect(supportedParameterOptions(speedMode, "7")).toEqual([
+      "fast",
+      "relax",
+      "turbo",
+    ]);
+    expect(supportedParameterOptions(quality, "7")).toEqual([1, 2, 4]);
+    expect(supportedParameterOptions(quality, "8.1")).toEqual([]);
   });
 });
 
@@ -119,9 +166,29 @@ describe("AI structured generation", () => {
       environment: "snowy forest",
     };
     const repaired = JSON.stringify({
-      promptZh: "雪林中的红狐",
-      promptEn: "a red fox in a snowy forest",
-      fields,
+      variants: [
+        {
+          id: "concise",
+          promptZh: "雪林红狐",
+          promptEn: "red fox, snowy forest",
+          fieldsZh: { ...fields, subject: "红狐", environment: "雪林" },
+          fieldsEn: fields,
+        },
+        {
+          id: "detailed",
+          promptZh: "雪林中的红狐",
+          promptEn: "a red fox in a snowy forest",
+          fieldsZh: { ...fields, subject: "红狐", environment: "雪林" },
+          fieldsEn: fields,
+        },
+        {
+          id: "experimental",
+          promptZh: "梦境雪林中的红狐",
+          promptEn: "a dreamlike red fox in a snowy forest",
+          fieldsZh: { ...fields, subject: "红狐", environment: "梦境雪林" },
+          fieldsEn: { ...fields, environment: "dreamlike snowy forest" },
+        },
+      ],
     });
     const fetchSpy = vi
       .fn()
@@ -153,11 +220,50 @@ describe("AI structured generation", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(result.source).toBe("ai");
-    expect(result.promptEn).toBe("a red fox in a snowy forest --v 7 --ar 3:2");
+    expect(result.promptEn).toBe("a red fox, snowy forest --v 7 --ar 3:2");
+    expect(result.variants.map((variant) => variant.id)).toEqual([
+      "concise",
+      "detailed",
+      "experimental",
+    ]);
 
     const secondRequest = fetchSpy.mock.calls[1]?.[1] as RequestInit;
     expect(String(secondRequest.body)).toContain("上一次输出未通过");
     expect(String(secondRequest.body)).not.toContain("secret-test-key");
+  });
+});
+
+describe("AI provider connection test", () => {
+  it("accepts a bounded OpenAI-compatible JSON health response", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"status":"ok"}' } }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      testAiProviderConnection({
+        config: {
+          provider: "custom",
+          model: "qwen3:8b",
+          apiKey: "ollama",
+          endpoint: "https://models.example.test/v1/chat/completions",
+        },
+        fetchImpl: fetchSpy as unknown as typeof fetch,
+        validateEndpoint: () => true,
+      }),
+    ).resolves.toBeUndefined();
+
+    const request = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(request.method).toBe("POST");
+    expect(String(request.body)).toContain('"response_format":{"type":"json_object"}');
+    expect(String(request.body)).not.toContain("variants");
   });
 });
 
@@ -187,6 +293,7 @@ describe("translation adapters", () => {
         provider: "libretranslate",
         endpoint: "https://libre.example.test/translate",
         apiKey: "shared-libre-key",
+        chineseLanguageCode: "zh-Hans",
       },
       fetchImpl,
     });
@@ -199,6 +306,7 @@ describe("translation adapters", () => {
     });
     const sharedRequest = fetchSpy.mock.calls[1]?.[1] as RequestInit;
     expect(String(sharedRequest.body)).toContain("shared-libre-key");
+    expect(String(sharedRequest.body)).toContain('"source":"zh-Hans"');
   });
 
   it("keeps the original text when all translation attempts fail", async () => {

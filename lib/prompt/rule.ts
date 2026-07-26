@@ -1,112 +1,165 @@
-import { resolvePresetFields } from "./presets";
-import { serializeParameters, validateParameters } from "./parameters";
 import {
-  PROMPT_FIELD_ORDER,
+  blocksToFields,
+  composePromptBodies,
+  createPromptBlock,
+  fieldsToBlocks,
+  normalizeBlockOrder,
+  parametersWithNegativeBlocks,
+  reconcileNegativeBlocks,
+} from "./blocks";
+import { composePromptWithReferences, validatePromptConfiguration } from "./references";
+import { resolvePresetFields } from "./presets";
+import {
+  PromptBlockSchema,
   PromptFieldsSchema,
   TranslatedPromptFieldsSchema,
+  type PromptBlock,
   type PromptDraft,
   type PromptFieldKey,
   type PromptFields,
   type PromptParameters,
+  type PromptReferences,
   type PromptWarning,
+  type TargetSurface,
+  type TaskType,
 } from "./types";
 
 export interface GenerateRulePromptInput {
-  fields: Partial<PromptFields>;
+  idea?: string;
+  translatedIdea?: string;
+  blocks?: PromptBlock[];
+  fields?: Partial<PromptFields>;
   translatedFields?: Partial<PromptFields>;
   presetIds?: readonly string[];
   parameters?: PromptParameters;
   custom?: string;
   translatedCustom?: string;
+  targetSurface?: TargetSurface;
+  taskType?: TaskType;
+  references?: PromptReferences;
 }
 
 export function generateRulePrompt(input: GenerateRulePromptInput): PromptDraft {
-  const fields = PromptFieldsSchema.parse(input.fields);
+  const targetSurface = input.targetSurface ?? "web";
+  const taskType = input.taskType ?? "image";
+  const fields = PromptFieldsSchema.parse(input.fields ?? {});
   const translatedFields = TranslatedPromptFieldsSchema.parse(input.translatedFields ?? {});
-  const custom = input.custom?.trim() ?? "";
-  const translatedCustom = input.translatedCustom?.trim() ?? "";
   const presets = resolvePresetFields(input.presetIds ?? []);
-  const parameterResult = validateParameters(input.parameters ?? {});
-  const warnings: PromptWarning[] = [...parameterResult.warnings];
+  let blocks = input.blocks?.map((block) => PromptBlockSchema.parse(block)) ??
+    fieldsToBlocks(fields, translatedFields);
 
+  if (input.presetIds?.length) {
+    blocks = [
+      ...blocks,
+      ...fieldsToBlocks(presets.fieldsZh, presets.fieldsEn, "template"),
+    ];
+  }
+  if (input.custom?.trim()) {
+    blocks.push(
+      createPromptBlock(
+        "custom",
+        input.custom,
+        input.translatedCustom || input.custom,
+        "user",
+      ),
+    );
+  }
+
+  const idea = input.idea?.trim() ?? "";
+  if (idea && !blocks.some((block) => block.textZh === idea || block.textEn === idea)) {
+    const field = blocks.some((block) => block.field === "subject") ? "custom" : "subject";
+    blocks.push(
+      createPromptBlock(field, idea, input.translatedIdea?.trim() || idea, "idea"),
+    );
+  }
+  const reconciled = reconcileNegativeBlocks(
+    normalizeBlockOrder(blocks),
+    input.parameters ?? {},
+  );
+  blocks = reconciled.blocks;
+
+  const warnings: PromptWarning[] = [];
   for (const id of presets.unknownPresetIds) {
     warnings.push({
-      code: "unknown_preset",
+      code: "UNKNOWN_PRESET",
       message: `未找到预设：${id}`,
       field: "presetIds",
       severity: "warning",
     });
   }
 
-  const zhSegments = collectSegments(fields, presets.fieldsZh);
-  const enSource = PROMPT_FIELD_ORDER.reduce<PromptFields>((result, key) => {
-    result[key] = translatedFields[key]?.trim() || fields[key];
-    return result;
-  }, PromptFieldsSchema.parse({}));
-  const enSegments = collectSegments(enSource, presets.fieldsEn);
-  const negativeZh = mergeParts(fields.negative, presets.fieldsZh.negative);
-  const negativeEn = mergeParts(enSource.negative, presets.fieldsEn.negative);
-  const suffix = serializeParameters(parameterResult.parameters);
-
-  const basePromptZh = mergeParts(zhSegments.join(", ") || enSegments.join(", "), custom);
-  const basePromptEn = mergeParts(
-    enSegments.join(", ") || zhSegments.join(", "),
-    translatedCustom || custom,
+  const configuration = validatePromptConfiguration(
+    parametersWithNegativeBlocks(reconciled.parameters, blocks),
+    input.references ?? {
+      imagePrompts: [],
+      styleReferences: [],
+      omniReference: null,
+      videoStart: null,
+      videoEnd: null,
+    },
+    {
+    targetSurface,
+    taskType,
+    },
   );
-
-  if (!basePromptZh && !basePromptEn) {
-    throw new Error("Need at least one structured field or custom phrase.");
+  warnings.push(...configuration.warnings);
+  if (!configuration.valid) {
+    throw new Error(
+      configuration.warnings.find((warning) => warning.severity === "error")?.message ??
+        "Midjourney 参数无效。",
+    );
   }
 
-  const promptZh = appendNegativeAndParameters(
-    basePromptZh,
-    negativeZh,
-    suffix,
-    "exclude",
-  );
-  const promptEn = appendNegativeAndParameters(
-    basePromptEn,
-    negativeEn,
-    suffix,
-    "exclude",
-  );
+  const { bodyZh: positiveZh, bodyEn: positiveEn } = composePromptBodies(blocks);
+  const bodyZh = positiveZh || positiveEn;
+  const bodyEn = positiveEn || positiveZh;
+  if (!bodyZh && !bodyEn) {
+    throw new Error("请至少填写一个创意、词块或结构字段。");
+  }
 
-  return {
+  const promptZh = composePromptWithReferences(
+    bodyZh,
+    configuration.parameters,
+    configuration.references,
+    { targetSurface, taskType },
+  );
+  const promptEn = composePromptWithReferences(
+    bodyEn,
+    configuration.parameters,
+    configuration.references,
+    { targetSurface, taskType },
+  );
+  const normalizedFields = blocksToFields(blocks, "zh");
+  const normalizedTranslated = blocksToFields(blocks, "en");
+  const variant = {
+    id: "detailed" as const,
+    label: "详细",
+    blocks,
+    bodyZh,
+    bodyEn,
     promptZh,
     promptEn,
-    fields,
-    translatedFields,
-    parameters: parameterResult.parameters,
+  };
+
+  return {
+    schemaVersion: 4,
+    variants: [variant],
+    selectedVariant: "detailed",
+    blocks,
+    bilingualSyncEnabled: /[\u3400-\u9fff]/.test(idea),
+    targetSurface,
+    taskType,
+    bodyZh,
+    bodyEn,
+    promptZh,
+    promptEn,
+    fields: normalizedFields,
+    translatedFields: normalizedTranslated,
+    parameters: configuration.parameters,
+    references: configuration.references,
     warnings,
     source: "rule",
   };
-}
-
-function collectSegments(fields: PromptFields, presetFields: PromptFields): string[] {
-  const segments: string[] = [];
-  for (const key of PROMPT_FIELD_ORDER) {
-    if (key === "negative") continue;
-    const value = mergeParts(fields[key], presetFields[key]);
-    if (value) segments.push(value);
-  }
-  return segments;
-}
-
-function mergeParts(...parts: Array<string | undefined>): string {
-  return parts
-    .map((part) => part?.trim())
-    .filter((part): part is string => Boolean(part))
-    .join(", ");
-}
-
-function appendNegativeAndParameters(
-  body: string,
-  negative: string,
-  suffix: string,
-  negativeLabel: string,
-): string {
-  const withNegative = negative ? `${body}, ${negativeLabel}: ${negative}` : body;
-  return suffix ? `${withNegative} ${suffix}` : withNegative;
 }
 
 export function insertPhraseAtCursor(
@@ -126,8 +179,10 @@ export function insertPhraseAtCursor(
   const insertion = `${needsLeadingSeparator ? ", " : ""}${phrase.trim()}${
     needsTrailingSeparator ? ", " : ""
   }`;
-  const value = `${prefix}${insertion}${suffix}`;
-  return { value, cursor: prefix.length + insertion.length };
+  return {
+    value: `${prefix}${insertion}${suffix}`,
+    cursor: prefix.length + insertion.length,
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -139,13 +194,13 @@ export function promptFieldLabel(key: PromptFieldKey): string {
     subject: "主体",
     action: "动作与表情",
     environment: "场景与环境",
-    medium: "艺术媒介",
-    style: "风格",
-    composition: "构图",
-    camera: "镜头",
+    composition: "构图与视角",
+    camera: "镜头与景别",
     lighting: "光线",
     color: "色彩",
     material: "材质",
+    medium: "艺术媒介",
+    style: "风格",
     mood: "氛围",
     negative: "排除内容",
   }[key];

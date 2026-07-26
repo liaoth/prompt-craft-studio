@@ -31,9 +31,12 @@ function stableValue(value: unknown): unknown {
 }
 
 export function promptContentHash(snapshot: StoredPromptSnapshot): string {
+  const content = Object.fromEntries(
+    Object.entries(snapshot).filter(([key]) => key !== "createdAt" && key !== "warnings"),
+  );
   const identity = {
-    promptEn: snapshot.promptEn.trim(),
-    parameters: snapshot.parameters ?? {},
+    schemaVersion: snapshot.schemaVersion ?? 1,
+    ...content,
   };
   return createHash("sha256")
     .update(JSON.stringify(stableValue(identity)))

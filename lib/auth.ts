@@ -7,6 +7,8 @@ import { lazyDb } from "@/lib/db";
 
 const BUILD_ONLY_SECRET =
   "build-only-placeholder-change-me-before-running-production-32chars";
+const trustedAuthProxies = csvEnvironment("BETTER_AUTH_TRUSTED_PROXIES");
+const authIpHeaders = csvEnvironment("BETTER_AUTH_IP_HEADERS");
 
 export function assertAuthConfigured(): void {
   const secret = process.env.BETTER_AUTH_SECRET?.trim() ?? "";
@@ -39,6 +41,13 @@ function smtpSettings() {
     secure: process.env.SMTP_SECURE === "true",
     auth: user && pass ? { user, pass } : undefined,
   };
+}
+
+function csvEnvironment(name: string): string[] {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 }
 
 async function sendAccountEmail(input: {
@@ -131,6 +140,16 @@ export const auth = betterAuth({
   advanced: {
     cookiePrefix: "mj_prompt",
     useSecureCookies: process.env.NODE_ENV === "production",
+    ...(trustedAuthProxies.length
+      ? {
+          ipAddress: {
+            trustedProxies: trustedAuthProxies,
+            ipAddressHeaders: authIpHeaders.length
+              ? authIpHeaders
+              : ["x-forwarded-for"],
+          },
+        }
+      : {}),
   },
 });
 

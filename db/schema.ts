@@ -130,6 +130,23 @@ export const promptHistories = pgTable(
   ],
 );
 
+export const promptFolders = pgTable(
+  "prompt_folders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 120 }).notNull(),
+    sortOrder: integer("sort_order").default(0).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("prompt_folders_user_name_uq").on(table.userId, table.name),
+    index("prompt_folders_user_sort_idx").on(table.userId, table.sortOrder),
+  ],
+);
+
 export const promptFavorites = pgTable(
   "prompt_favorites",
   {
@@ -141,6 +158,10 @@ export const promptFavorites = pgTable(
     promptZh: text("prompt_zh").notNull(),
     promptEn: text("prompt_en").notNull(),
     source: varchar("source", { length: 16 }).notNull(),
+    title: varchar("title", { length: 160 }).default("未命名作品").notNull(),
+    folderId: uuid("folder_id").references(() => promptFolders.id, {
+      onDelete: "set null",
+    }),
     note: varchar("note", { length: 1000 }).default("").notNull(),
     snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
     ...timestamps,
@@ -153,6 +174,38 @@ export const promptFavorites = pgTable(
     index("prompt_favorites_user_updated_idx").on(
       table.userId,
       table.updatedAt,
+    ),
+    index("prompt_favorites_user_folder_idx").on(table.userId, table.folderId),
+  ],
+);
+
+export const promptFavoriteRevisions = pgTable(
+  "prompt_favorite_revisions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    favoriteId: uuid("favorite_id")
+      .notNull()
+      .references(() => promptFavorites.id, { onDelete: "cascade" }),
+    revisionNo: integer("revision_no").notNull(),
+    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    promptZh: text("prompt_zh").notNull(),
+    promptEn: text("prompt_en").notNull(),
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("prompt_favorite_revisions_number_uq").on(
+      table.favoriteId,
+      table.revisionNo,
+    ),
+    index("prompt_favorite_revisions_user_favorite_idx").on(
+      table.userId,
+      table.favoriteId,
     ),
   ],
 );
@@ -265,7 +318,9 @@ export const userRelations = relations(user, ({ many }) => ({
   accounts: many(account),
   phrases: many(phraseSnippets),
   histories: many(promptHistories),
+  folders: many(promptFolders),
   favorites: many(promptFavorites),
+  favoriteRevisions: many(promptFavoriteRevisions),
   aiProviderConfigs: many(aiProviderConfigs),
   translationConfigs: many(translationConfigs),
   midjourneyProviderConfigs: many(midjourneyProviderConfigs),

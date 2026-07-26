@@ -46,8 +46,14 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: ${DOCKER_DATABASE_URL:?Set DOCKER_DATABASE_URL in .env using a URL-encoded password}
+      SITE_AI_PROVIDER: ${SITE_AI_PROVIDER:-}
+      SITE_AI_MODEL: ${SITE_AI_MODEL:-}
+      SITE_AI_API_KEY: ${SITE_AI_API_KEY:-}
+      SITE_AI_ENDPOINT: ${SITE_AI_ENDPOINT:-}
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
