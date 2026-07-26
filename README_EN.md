@@ -7,7 +7,7 @@ A self-hosted bilingual Midjourney prompt workspace that combines natural-langua
 > [!IMPORTANT]
 > This is not an official Midjourney product and it does not create Midjourney image jobs. “Send to configured endpoint” only forwards text to a Discord webhook or a custom HTTP endpoint.
 
-![Actual Prompt Craft Studio workspace](public/og.png)
+![Actual Prompt Craft Studio workspace](public/workbench-full.png)
 
 ## Highlights
 
