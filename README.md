@@ -7,7 +7,7 @@
 > [!IMPORTANT]
 > 本项目不是 Midjourney 官方产品，也不会直接创建 Midjourney 图片任务。“发送到配置入口”仅把文本推送到 Discord Webhook 或自定义 HTTP 接口。
 
-![Prompt Craft Studio](public/og.png)
+![Prompt Craft Studio 实际工作台界面](public/og.png)
 
 ## 功能概览
 
