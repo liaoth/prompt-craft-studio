@@ -34,6 +34,7 @@ export const POST = route(async (request) => {
   );
   const input = await readJson(request, testSchema, 32 * 1024);
   let config;
+  let allowInsecureRemote = false;
   if ("id" in input) {
     const [row] = await getDb()
       .select()
@@ -47,6 +48,7 @@ export const POST = route(async (request) => {
       .limit(1);
     if (!row) throw new ApiError(404, "翻译配置不存在。", "NOT_FOUND");
     config = translationConfigFromRow(row);
+    allowInsecureRemote = true;
   } else {
     config = {
       provider: input.provider,
@@ -62,7 +64,7 @@ export const POST = route(async (request) => {
     config,
     fetchImpl: safeProviderFetch,
     validateEndpoint: (endpoint) =>
-      validateTranslationEndpointUrl(endpoint, { allowInsecureRemote: true }),
+      validateTranslationEndpointUrl(endpoint, { allowInsecureRemote }),
     timeoutMs: 20_000,
   });
   if (!result.translated) {

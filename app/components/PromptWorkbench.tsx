@@ -2126,6 +2126,8 @@ function ConfigSection({
   const [modelValue, setModelValue] = useState(defaults.model);
   const [labelValue, setLabelValue] = useState(defaults.label);
   const [expandedHelpId, setExpandedHelpId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const pendingActionRef = useRef(false);
   const selectedHelp = serviceConfigHelp(selectedProvider);
   const providerOptions = providersForKind(kind);
 
@@ -2133,6 +2135,25 @@ function ConfigSection({
     setSelectedProvider(provider);
     setLabelValue(providerLabel(provider));
     if (kind === "ai") setModelValue(defaultModelForProvider(provider));
+  }
+
+  async function runConfigAction(
+    actionKey: string,
+    action: () => Promise<void>,
+    successMessage?: string,
+  ) {
+    if (pendingActionRef.current) return;
+    pendingActionRef.current = true;
+    setPendingAction(actionKey);
+    try {
+      await action();
+      if (successMessage) notify(successMessage);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "配置操作失败。");
+    } finally {
+      pendingActionRef.current = false;
+      setPendingAction(null);
+    }
   }
 
   return (
@@ -2163,25 +2184,55 @@ function ConfigSection({
             >
               <CircleAlert size={13} />配置说明
             </button>
-            <button type="button" onClick={async () => {
-                await requestJson(`${base}/${item.id}`, {
-                  method: "PATCH",
-                  body: JSON.stringify({ isActive: !item.isActive }),
-                });
-                await onReload();
-              }}>{item.isActive ? "停用" : "启用"}</button>
-            <button type="button" onClick={async () => {
-              try {
-                await requestJson(`${base}/test`, { method: "POST", body: JSON.stringify({ id: item.id }) });
-                notify("连接测试成功。");
-              } catch (error) {
-                notify(error instanceof Error ? error.message : "连接测试失败。");
-              }
-            }}>测试</button>
-            <button type="button" onClick={async () => {
+            <button
+              type="button"
+              disabled={pendingAction !== null}
+              onClick={() => void runConfigAction(
+                `toggle:${item.id}`,
+                async () => {
+                  await requestJson(`${base}/${item.id}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({ isActive: !item.isActive }),
+                  });
+                  await onReload();
+                },
+                item.isActive ? "配置已停用。" : "配置已启用。",
+              )}
+            >
+              {pendingAction === `toggle:${item.id}` && (
+                <LoaderCircle className="spin" size={13} />
+              )}
+              {item.isActive ? "停用" : "启用"}
+            </button>
+            <button
+              type="button"
+              disabled={pendingAction !== null}
+              onClick={() => void runConfigAction(
+                `test:${item.id}`,
+                async () => {
+                  await requestJson(`${base}/test`, {
+                    method: "POST",
+                    body: JSON.stringify({ id: item.id }),
+                  });
+                },
+                "连接测试成功。",
+              )}
+            >
+              {pendingAction === `test:${item.id}` && (
+                <LoaderCircle className="spin" size={13} />
+              )}
+              测试
+            </button>
+            <button type="button" disabled={pendingAction !== null} onClick={() => {
               if (!window.confirm(`确定删除配置“${item.label}”吗？`)) return;
-              await requestJson(`${base}/${item.id}`, { method: "DELETE" });
-              await onReload();
+              void runConfigAction(
+                `delete:${item.id}`,
+                async () => {
+                  await requestJson(`${base}/${item.id}`, { method: "DELETE" });
+                  await onReload();
+                },
+                "配置已删除。",
+              );
             }} aria-label={`删除配置 ${item.label}`}><Trash2 size={13} /></button>
           </article>
           {expandedHelpId === item.id && (
@@ -2194,8 +2245,9 @@ function ConfigSection({
         <ProviderSetupHelpPanel help={selectedHelp} />
         <form
           key={`${kind}-${items.length}-${selectedProvider}`}
-          onSubmit={async (event) => {
+          onSubmit={(event) => {
             event.preventDefault();
+            if (pendingAction) return;
             const formElement = event.currentTarget;
             const form = new FormData(formElement);
             const payload: Record<string, unknown> = {
@@ -2206,17 +2258,21 @@ function ConfigSection({
               isActive: true,
             };
             if (kind === "ai") payload.model = String(form.get("model"));
-            try {
-              await requestJson(base, { method: "POST", body: JSON.stringify(payload) });
-              formElement.reset();
-              setSelectedProvider(defaults.provider);
-              setLabelValue(defaults.label);
-              setModelValue(defaults.model);
-              await onReload();
-              notify("配置已加密保存。");
-            } catch (error) {
-              notify(error instanceof Error ? error.message : "配置保存失败。");
-            }
+            void runConfigAction(
+              "create",
+              async () => {
+                await requestJson(base, {
+                  method: "POST",
+                  body: JSON.stringify(payload),
+                });
+                formElement.reset();
+                setSelectedProvider(defaults.provider);
+                setLabelValue(defaults.label);
+                setModelValue(defaults.model);
+                await onReload();
+              },
+              "配置已加密保存。",
+            );
           }}
         >
           <label>配置名称
@@ -2271,7 +2327,16 @@ function ConfigSection({
               }
             />
           </label>
-          <button className="v2-primary" type="submit"><Plus size={14} />保存并启用</button>
+          <button
+            className="v2-primary"
+            type="submit"
+            disabled={pendingAction !== null}
+          >
+            {pendingAction === "create"
+              ? <LoaderCircle className="spin" size={14} />
+              : <Plus size={14} />}
+            保存并启用
+          </button>
         </form>
       </details>
     </section>
