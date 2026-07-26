@@ -223,7 +223,8 @@ async function translateCustom(
     targetLanguage: "en",
     config,
     fetchImpl: safeProviderFetch,
-    validateEndpoint: validateTranslationEndpointUrl,
+    validateEndpoint: (endpoint) =>
+      validateTranslationEndpointUrl(endpoint, { allowInsecureRemote: true }),
     timeoutMs: 30_000,
   });
   return {
@@ -252,7 +253,8 @@ async function translateFields(
         targetLanguage: "en",
         config,
         fetchImpl: safeProviderFetch,
-        validateEndpoint: validateTranslationEndpointUrl,
+        validateEndpoint: (endpoint) =>
+          validateTranslationEndpointUrl(endpoint, { allowInsecureRemote: true }),
         timeoutMs: 30_000,
       }),
     })),

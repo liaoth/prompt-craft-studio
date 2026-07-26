@@ -61,7 +61,8 @@ export const POST = route(async (request) => {
     targetLanguage: "zh",
     config,
     fetchImpl: safeProviderFetch,
-    validateEndpoint: validateTranslationEndpointUrl,
+    validateEndpoint: (endpoint) =>
+      validateTranslationEndpointUrl(endpoint, { allowInsecureRemote: true }),
     timeoutMs: 20_000,
   });
   if (!result.translated) {

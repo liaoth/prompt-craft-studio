@@ -45,7 +45,8 @@ export const POST = route(async (request) => {
     ...input,
     config: active ? translationConfigFromRow(active) : undefined,
     fetchImpl: safeProviderFetch,
-    validateEndpoint: validateTranslationEndpointUrl,
+    validateEndpoint: (endpoint) =>
+      validateTranslationEndpointUrl(endpoint, { allowInsecureRemote: true }),
     timeoutMs: 30_000,
   });
   return ok(result);

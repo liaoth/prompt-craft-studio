@@ -4885,6 +4885,98 @@ select:disabled {
   grid-column: 1 / -1;
 }
 
+.v2-config-section article button,
+.v2-config-create > summary,
+.v2-config-create form button,
+.v2-drawer > nav button,
+.v2-drawer > header button {
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.v2-config-section article button,
+.v2-config-create form button {
+  min-height: 34px;
+  border-color: #4a465b;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .045), transparent 55%),
+    #252332;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, .06),
+    0 1px rgba(0, 0, 0, .18);
+  color: #d9d3e7;
+}
+
+.v2-config-section article button:hover:not(:disabled),
+.v2-config-create form button:hover:not(:disabled) {
+  border-color: #8478bd;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .07), transparent 55%),
+    #302a45;
+  color: #fff;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, .1),
+    0 4px 12px rgba(9, 7, 18, .22);
+}
+
+.v2-config-section article button:active:not(:disabled),
+.v2-config-create > summary:active,
+.v2-config-create form button:active:not(:disabled),
+.v2-drawer > nav button:active,
+.v2-drawer > header button:active {
+  transform: translateY(1px) scale(.98);
+  border-color: #a99cff;
+  background: #211c35;
+  box-shadow:
+    inset 0 2px 5px rgba(4, 3, 12, .48),
+    0 0 0 1px rgba(169, 156, 255, .12);
+}
+
+.v2-config-section article button:focus-visible,
+.v2-config-create > summary:focus-visible,
+.v2-config-create form button:focus-visible,
+.v2-drawer > nav button:focus-visible,
+.v2-drawer > header button:focus-visible {
+  outline: 2px solid #a99cff;
+  outline-offset: 2px;
+}
+
+.v2-config-section article button:disabled,
+.v2-config-create form button:disabled {
+  cursor: not-allowed;
+  filter: saturate(.55);
+}
+
+.v2-config-create > summary {
+  border-radius: 10px;
+  outline: none;
+}
+
+.v2-config-create > summary:hover {
+  color: #fff;
+  background: rgba(139, 123, 255, .1);
+}
+
+.v2-drawer > nav button:hover {
+  color: #f0ecff;
+  background: rgba(139, 123, 255, .08);
+}
+
+.v2-drawer > nav button.active:hover {
+  background: rgba(139, 123, 255, .18);
+}
+
+.v2-drawer > header button:hover {
+  background: #302b43;
+  color: #fff;
+}
+
 .v2-config-item {
   display: grid;
   gap: 8px;

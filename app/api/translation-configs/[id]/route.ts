@@ -45,9 +45,17 @@ export const PATCH = route<RouteContext>(async (request, context) => {
       input.endpoint ??
       (input.provider && input.provider !== existing.provider
         ? undefined
-        : decryptedEndpoint(existing.endpoint)),
+      : decryptedEndpoint(existing.endpoint)),
   });
-  if (!(await validateEndpointUrl(endpoint))) {
+  const usesStoredEndpoint =
+    input.endpoint === undefined &&
+    input.provider === undefined &&
+    endpoint === decryptedEndpoint(existing.endpoint);
+  if (
+    !(await validateEndpointUrl(endpoint, {
+      allowInsecureRemote: usesStoredEndpoint,
+    }))
+  ) {
     throw new ApiError(400, "翻译 API 地址未通过安全检查。", "UNSAFE_ENDPOINT");
   }
 

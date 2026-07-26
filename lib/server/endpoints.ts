@@ -24,6 +24,11 @@ export const MAX_UPSTREAM_RESPONSE_BYTES = 64 * 1024;
 export type EndpointValidationOptions = {
   development?: boolean;
   resolveDns?: boolean;
+  /**
+   * Allows an already-saved legacy public HTTP endpoint to keep working.
+   * New configuration writes must continue to use public HTTPS.
+   */
+  allowInsecureRemote?: boolean;
 };
 
 export async function validateEndpointUrl(
@@ -59,9 +64,9 @@ export async function validateEndpointUrl(
     return url.protocol === "http:" || url.protocol === "https:";
   }
 
-  // Remote custom endpoints must use TLS. Private and reserved targets stay
-  // blocked even though this single-user app may access loopback services.
-  if (url.protocol !== "https:") return false;
+  // Remote custom endpoints normally require TLS. A legacy saved endpoint may
+  // opt into HTTP, but it still must resolve to a public address.
+  if (url.protocol !== "https:" && !options.allowInsecureRemote) return false;
 
   if (isIP(hostname)) return isPublicIp(hostname);
   if (options.resolveDns === false) return true;
@@ -240,6 +245,7 @@ export async function validateAiEndpointUrl(
 
 export async function validateTranslationEndpointUrl(
   endpoint: string,
+  options: EndpointValidationOptions = {},
 ): Promise<boolean> {
-  return validateEndpointUrl(endpoint);
+  return validateEndpointUrl(endpoint, options);
 }

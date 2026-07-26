@@ -189,6 +189,18 @@ describe("provider endpoint validation", () => {
       }),
     ).resolves.toBe(true);
   });
+
+  it("allows legacy public HTTP only when explicitly opted in", async () => {
+    await expect(
+      validateEndpointUrl("http://8.8.8.8:5000/translate"),
+    ).resolves.toBe(false);
+    await expect(
+      validateEndpointUrl("http://8.8.8.8:5000/translate", {
+        allowInsecureRemote: true,
+        resolveDns: false,
+      }),
+    ).resolves.toBe(true);
+  });
 });
 
 describe("same-origin write protection", () => {
