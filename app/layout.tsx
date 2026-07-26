@@ -6,7 +6,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
   const host =
     requestHeaders.get("x-forwarded-host") || requestHeaders.get("host");
-  const fallbackUrl = process.env.APP_URL || "http://localhost:3000";
+  const fallbackUrl = "http://127.0.0.1:3000";
   const hostname = host?.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
   const isLoopback =
     hostname === "localhost" ||

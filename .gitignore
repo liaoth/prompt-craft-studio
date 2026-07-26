@@ -17,6 +17,8 @@
 /.next/
 /.vinext/
 /out/
+/output/
+/release/
 
 # misc
 .DS_Store
@@ -30,7 +32,6 @@ yarn-error.log*
 
 # environment and local secrets
 .env*
-!.env.example
 
 # vercel
 .vercel
@@ -43,6 +44,9 @@ next-env.d.ts
 /outputs/
 /work/
 /data/
+*.db
+*.db-shm
+*.db-wal
 /libretranslate-data/
 /backups/
 /.playwright-cli/

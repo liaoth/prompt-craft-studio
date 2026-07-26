@@ -1,28 +1,19 @@
-import type { NextRequest } from "next/server";
+import { LOCAL_USER_ID } from "@/db/schema";
 
-import { assertAuthConfigured, auth } from "@/lib/auth";
+const LOCAL_WORKSPACE = {
+  user: {
+    id: LOCAL_USER_ID,
+    name: "Local Workspace",
+    email: "local@prompt-craft.invalid",
+    emailVerified: true,
+  },
+} as const;
 
-export class UnauthorizedError extends Error {
-  constructor(
-    message = "请先登录。",
-    public readonly status = 401,
-    public readonly code = "UNAUTHORIZED",
-  ) {
-    super(message);
-    this.name = "UnauthorizedError";
-  }
-}
-
-export async function requireSession(request: Request | NextRequest) {
-  assertAuthConfigured();
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user?.id) throw new UnauthorizedError();
-  if (!session.user.emailVerified) {
-    throw new UnauthorizedError(
-      "请先完成邮箱验证。",
-      403,
-      "EMAIL_NOT_VERIFIED",
-    );
-  }
-  return session;
+/**
+ * Keep the former session-shaped boundary so business routes stay scoped to
+ * one server-owned identity without accepting a client-supplied user id.
+ */
+export async function requireSession(request?: Request) {
+  void request;
+  return LOCAL_WORKSPACE;
 }

@@ -1,4 +1,4 @@
-import { and, asc, count, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
 
 import { promptFavorites, promptFolders } from "@/db/schema";
 import { getDb } from "@/lib/db";
@@ -16,7 +16,7 @@ export const GET = route(async (request) => {
       createdAt: promptFolders.createdAt,
       updatedAt: promptFolders.updatedAt,
       itemCount: sql<number>`(
-        select count(*)::int from ${promptFavorites}
+        select count(*) from ${promptFavorites}
         where ${promptFavorites.folderId} = ${promptFolders.id}
           and ${promptFavorites.userId} = ${current.user.id}
       )`,
@@ -30,7 +30,7 @@ export const GET = route(async (request) => {
     .where(
       and(
         eq(promptFavorites.userId, current.user.id),
-        sql`${promptFavorites.folderId} is null`,
+        isNull(promptFavorites.folderId),
       ),
     );
   return ok({ items, unfiledCount: Number(unfiled?.total ?? 0) });

@@ -1,4 +1,4 @@
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 
 import { promptFavoriteRevisions, promptFavorites } from "@/db/schema";
 import { getDb } from "@/lib/db";
@@ -47,9 +47,6 @@ export const POST = route<RouteContext>(async (request, context) => {
   const contentHash = promptContentHash(snapshot);
   const db = getDb();
   const result = await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`revision:${favoriteId}`}, 0))`,
-    );
     const [favorite] = await tx
       .select()
       .from(promptFavorites)

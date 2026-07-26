@@ -28,15 +28,11 @@ import {
 import { requireSession } from "@/lib/server/auth";
 import {
   aiConfigFromRow,
-  sharedAiConfig,
-  sharedAiTimeoutMs,
-  sharedTranslationConfig,
   translationConfigFromRow,
 } from "@/lib/server/configs";
 import {
   safeProviderFetch,
   validateAiEndpointUrl,
-  validateEndpointUrl,
   validateTranslationEndpointUrl,
 } from "@/lib/server/endpoints";
 import { savePromptHistory } from "@/lib/server/history";
@@ -111,11 +107,11 @@ export const POST = route(async (request) => {
         ),
       )
       .limit(1);
-    const config = provider ? aiConfigFromRow(provider) : sharedAiConfig();
+    const config = provider ? aiConfigFromRow(provider) : undefined;
     if (!config) {
       throw new ApiError(
         400,
-        "自然语言三版本生成需要模型配置。请启用个人模型，或联系站点管理员配置共享模型。",
+        "自然语言三版本生成需要模型配置。请先在设置中添加并启用 AI 模型。",
         "AI_PROVIDER_REQUIRED",
       );
     }
@@ -135,9 +131,8 @@ export const POST = route(async (request) => {
       targetSurface: input.targetSurface,
       taskType: input.taskType,
       fetchImpl: safeProviderFetch,
-      validateEndpoint:
-        provider ? validateEndpointUrl : validateAiEndpointUrl,
-      timeoutMs: provider ? 45_000 : (sharedAiTimeoutMs() ?? 45_000),
+      validateEndpoint: validateAiEndpointUrl,
+      timeoutMs: 45_000,
     });
   } else {
     const [translationRow] = await db
@@ -152,7 +147,7 @@ export const POST = route(async (request) => {
       .limit(1);
     const translationConfig = translationRow
       ? translationConfigFromRow(translationRow)
-      : sharedTranslationConfig();
+      : undefined;
     const translation = await translateFields(
       input.fields,
       input.translatedFields,
@@ -227,7 +222,6 @@ async function translateCustom(
     sourceLanguage: "zh",
     targetLanguage: "en",
     config,
-    sharedLibreTranslateConfig: sharedTranslationConfig(),
     fetchImpl: safeProviderFetch,
     validateEndpoint: validateTranslationEndpointUrl,
     timeoutMs: 30_000,
@@ -257,7 +251,6 @@ async function translateFields(
         sourceLanguage: "zh",
         targetLanguage: "en",
         config,
-        sharedLibreTranslateConfig: sharedTranslationConfig(),
         fetchImpl: safeProviderFetch,
         validateEndpoint: validateTranslationEndpointUrl,
         timeoutMs: 30_000,

@@ -125,30 +125,30 @@ export type MidjourneyProviderConfigRow = {
   updatedAt: Date;
 };
 
-export function encryptedApiKey(apiKey?: string): string {
+export function encryptedApiKey(apiKey?: string, rawKey?: string): string {
   if (!apiKey) return "";
-  return encryptSecret(JSON.stringify({ apiKey }));
+  return encryptSecret(JSON.stringify({ apiKey }), rawKey);
 }
 
-export function encryptedEndpoint(endpoint: string): string {
-  return encryptSecret(endpoint);
+export function encryptedEndpoint(endpoint: string, rawKey?: string): string {
+  return encryptSecret(endpoint, rawKey);
 }
 
-export function decryptedEndpoint(stored: string): string {
+export function decryptedEndpoint(stored: string, rawKey?: string): string {
   if (!stored) return "";
   // Backwards compatibility for rows created before endpoints were encrypted.
   if (!stored.startsWith("v1.")) return stored;
   try {
-    return decryptSecret(stored);
+    return decryptSecret(stored, rawKey);
   } catch {
     throw new ApiError(500, "Failed to decrypt endpoint", "CREDENTIAL_ERROR");
   }
 }
 
-export function decryptedApiKey(encrypted?: string): string {
+export function decryptedApiKey(encrypted?: string, rawKey?: string): string {
   if (!encrypted) return "";
   try {
-    const payload = JSON.parse(decryptSecret(encrypted)) as unknown;
+    const payload = JSON.parse(decryptSecret(encrypted, rawKey)) as unknown;
     if (
       !payload ||
       typeof payload !== "object" ||
@@ -249,58 +249,4 @@ export function resolveTranslationEndpoint(input: {
   endpoint?: string;
 }): string {
   return input.endpoint ?? TRANSLATION_ADAPTERS[input.provider].defaultEndpoint;
-}
-
-export function sharedLibreTranslateEndpoint(): string | undefined {
-  return (
-    process.env.SHARED_LIBRETRANSLATE_URL?.trim() ||
-    process.env.LIBRETRANSLATE_URL?.trim() ||
-    undefined
-  );
-}
-
-export function sharedTranslationConfig(): TranslationConfig | undefined {
-  const endpoint = sharedLibreTranslateEndpoint();
-  if (!endpoint) return undefined;
-  const apiKey = process.env.SHARED_LIBRETRANSLATE_API_KEY?.trim();
-  const chineseLanguageCode =
-    process.env.SHARED_LIBRETRANSLATE_CHINESE_LANGUAGE_CODE?.trim();
-  return TranslationConfigSchema.parse({
-    provider: "libretranslate",
-    endpoint,
-    ...(apiKey ? { apiKey } : {}),
-    ...(chineseLanguageCode ? { chineseLanguageCode } : {}),
-  });
-}
-
-/**
- * Site-wide AI fallback. It is intentionally returned only to server code;
- * callers must never serialize this object because it contains the raw key.
- */
-export function sharedAiConfig(): AiProviderConfig | undefined {
-  const provider = process.env.SITE_AI_PROVIDER?.trim();
-  const model = process.env.SITE_AI_MODEL?.trim();
-  const apiKey = process.env.SITE_AI_API_KEY?.trim();
-  const endpoint = process.env.SITE_AI_ENDPOINT?.trim();
-  if (!provider || !model || !apiKey) return undefined;
-  return AiProviderConfigSchema.parse({
-    provider,
-    model,
-    apiKey,
-    ...(endpoint ? { endpoint } : {}),
-  });
-}
-
-export function sharedAiTimeoutMs(): number | undefined {
-  const raw = process.env.SITE_AI_TIMEOUT_MS?.trim();
-  if (!raw) return undefined;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > 120_000) {
-    throw new ApiError(
-      500,
-      "SITE_AI_TIMEOUT_MS must be an integer between 1 and 120000.",
-      "INVALID_SITE_CONFIG",
-    );
-  }
-  return value;
 }

@@ -56,18 +56,12 @@ export async function validateEndpointUrl(
   }
 
   if (LOCAL_HOSTS.has(hostname)) {
-    return false;
+    return url.protocol === "http:" || url.protocol === "https:";
   }
 
-  // Any non-preset/custom endpoint must use TLS.
-  if (url.protocol !== "https:" || LOCAL_HOSTS.has(hostname)) return false;
-
-  // Production custom endpoints are an operator decision. Requiring an exact
-  // hostname allowlist prevents a user-controlled hostname from passing the
-  // DNS check and later rebinding to a private address during fetch.
-  if (!customEndpointHostAllowlist().has(hostname)) {
-    return false;
-  }
+  // Remote custom endpoints must use TLS. Private and reserved targets stay
+  // blocked even though this single-user app may access loopback services.
+  if (url.protocol !== "https:") return false;
 
   if (isIP(hostname)) return isPublicIp(hostname);
   if (options.resolveDns === false) return true;
@@ -233,69 +227,19 @@ export async function validateMidjourneyEndpointUrl(
   ) {
     return true;
   }
+  if (hostname.includes("discord")) return false;
 
   return validateEndpointUrl(rawUrl, options);
 }
 
-/**
- * SITE_AI_ENDPOINT is controlled by the server operator, so an exact match
- * may use a loopback, host-gateway, or private Docker-network address.
- * User-created provider endpoints continue to use the public SSRF policy.
- */
 export async function validateAiEndpointUrl(
   endpoint: string,
 ): Promise<boolean> {
-  const shared = process.env.SITE_AI_ENDPOINT?.trim();
-  if (shared && normalizeEndpoint(shared) === normalizeEndpoint(endpoint)) {
-    try {
-      const parsed = new URL(endpoint);
-      return (
-        !parsed.username &&
-        !parsed.password &&
-        (parsed.protocol === "http:" || parsed.protocol === "https:")
-      );
-    } catch {
-      return false;
-    }
-  }
   return validateEndpointUrl(endpoint);
 }
 
-/**
- * LIBRETRANSLATE_URL is controlled by the server operator rather than an end
- * user, so an exact match may point at the private Docker service network.
- * User-supplied translation endpoints still go through the public SSRF policy.
- */
 export async function validateTranslationEndpointUrl(
   endpoint: string,
 ): Promise<boolean> {
-  const shared =
-    process.env.SHARED_LIBRETRANSLATE_URL?.trim() ||
-    process.env.LIBRETRANSLATE_URL?.trim();
-  if (shared && normalizeEndpoint(shared) === normalizeEndpoint(endpoint)) {
-    try {
-      const parsed = new URL(endpoint);
-      return (
-        !parsed.username &&
-        !parsed.password &&
-        (parsed.protocol === "http:" || parsed.protocol === "https:")
-      );
-    } catch {
-      return false;
-    }
-  }
   return validateEndpointUrl(endpoint);
-}
-
-function normalizeEndpoint(endpoint: string): string {
-  return endpoint.replace(/\/+$/, "");
-}
-
-function customEndpointHostAllowlist(): Set<string> {
-  return new Set(
-    (process.env.CUSTOM_ENDPOINT_HOST_ALLOWLIST ?? "")
-      .split(",")
-      .map((host) => host.trim().toLowerCase().replace(/\.$/, ""))
-      .filter(Boolean),
-  );
 }

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   DndContext,
   DragOverlay,
@@ -18,8 +17,6 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import {
-  Archive,
-  Bot,
   Check,
   ChevronRight,
   CircleAlert,
@@ -30,15 +27,12 @@ import {
   Heart,
   History,
   Library,
-  Languages,
   LoaderCircle,
-  LogOut,
   Menu,
   Plus,
   RefreshCw,
   Save,
   Send,
-  ShieldCheck,
   Settings2,
   Sparkles,
   Trash2,
@@ -54,7 +48,6 @@ import {
   type FormEvent,
 } from "react";
 
-import { authClient } from "@/lib/auth-client";
 import {
   providersForKind,
   serviceConfigHelp,
@@ -185,29 +178,6 @@ type PublicConfig = {
   model?: string;
   apiKeyMasked: string;
   isActive: boolean;
-};
-type SiteServiceSummary = {
-  ai:
-    | { configured: false }
-    | {
-        configured: true;
-        service: string;
-        provider: string;
-        model: string;
-        endpoint: string;
-        apiKeyConfigured: boolean;
-        timeoutMs: number;
-      };
-  translation:
-    | { configured: false }
-    | {
-        configured: true;
-        service: string;
-        provider: string;
-        endpoint: string;
-        apiKeyConfigured: boolean;
-        chineseLanguageCode: string;
-      };
 };
 type SubmissionRecord = {
   id: string;
@@ -358,8 +328,6 @@ function snapshotVariant(
 }
 
 export function PromptWorkbench() {
-  const session = authClient.useSession();
-  const authenticated = Boolean(session.data?.user);
   const initialTemplate = PROMPT_TEMPLATES[0];
   const [blocks, setBlocks] = useState<PromptBlock[]>(() => cloneTemplateBlocks(initialTemplate));
   const blocksRef = useRef(blocks);
@@ -411,9 +379,6 @@ export function PromptWorkbench() {
   const [aiConfigs, setAiConfigs] = useState<PublicConfig[]>([]);
   const [translationConfigs, setTranslationConfigs] = useState<PublicConfig[]>([]);
   const [pushConfigs, setPushConfigs] = useState<PublicConfig[]>([]);
-  const [siteServices, setSiteServices] = useState<SiteServiceSummary | null>(
-    null,
-  );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -512,37 +477,32 @@ export function PromptWorkbench() {
   const displayedPhrases = visiblePhrases.slice(0, phraseLimit);
 
   const loadPrivateData = useCallback(async () => {
-    if (!authenticated) return;
     setPrivateLoading(true);
     try {
-      const [phraseData, folderData, configA, configT, configM, sharedServices] =
+      const [phraseData, folderData, configA, configT, configM] =
         await Promise.all([
         requestJson<ListResponse<PhraseSnippet>>("/api/phrases"),
         requestJson<{ items: FolderRecord[] }>("/api/folders"),
         requestJson<ListResponse<PublicConfig>>("/api/provider-configs"),
         requestJson<ListResponse<PublicConfig>>("/api/translation-configs"),
         requestJson<ListResponse<PublicConfig>>("/api/midjourney-configs"),
-        requestJson<SiteServiceSummary>("/api/site-services"),
       ]);
       setPhrases(phraseData.items);
       setFolders(folderData.items);
       setAiConfigs(configA.items);
       setTranslationConfigs(configT.items);
       setPushConfigs(configM.items);
-      setSiteServices(sharedServices);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "私有数据加载失败。");
+      notify(error instanceof Error ? error.message : "本地数据加载失败。");
     } finally {
       setPrivateLoading(false);
     }
-  }, [authenticated, notify]);
+  }, [notify]);
 
   useEffect(() => {
-    if (!session.isPending && authenticated) {
-      const timer = window.setTimeout(() => void loadPrivateData(), 0);
-      return () => window.clearTimeout(timer);
-    }
-  }, [authenticated, loadPrivateData, session.isPending]);
+    const timer = window.setTimeout(() => void loadPrivateData(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadPrivateData]);
 
   useEffect(() => {
     const targets = blocks.reduce<TranslationTarget[]>((items, block) => {
@@ -572,7 +532,7 @@ export function PromptWorkbench() {
       const failureKey = `${target.block.id}:${target.direction}:${target.source}`;
       return !translationFailures.current.has(failureKey);
     });
-    if (!authenticated || !targets.length) return;
+    if (!targets.length) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setTranslationStatuses((current) => {
@@ -643,7 +603,7 @@ export function PromptWorkbench() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [authenticated, blocks, commitBlocks, translationRetryTick]);
+  }, [blocks, commitBlocks, translationRetryTick]);
 
   useEffect(
     () => () => {
@@ -653,10 +613,6 @@ export function PromptWorkbench() {
   );
 
   async function generate() {
-    if (!authenticated) {
-      notify("请先登录，生成结果才能安全保存到你的历史记录。");
-      return;
-    }
     if (!idea.trim() && !normalizedBlocks.length) {
       notify("请输入创意或添加词块。");
       return;
@@ -1059,7 +1015,6 @@ export function PromptWorkbench() {
   }
 
   async function loadHistory() {
-    if (!authenticated) return;
     try {
       const result = await requestJson<ListResponse<PromptRecord>>("/api/history?limit=100");
       setHistoryItems(result.items);
@@ -1069,7 +1024,6 @@ export function PromptWorkbench() {
   }
 
   const loadLibrary = useCallback(async () => {
-    if (!authenticated) return;
     try {
       const query = new URLSearchParams({ limit: "100" });
       if (favoriteSearch) query.set("search", favoriteSearch);
@@ -1083,10 +1037,9 @@ export function PromptWorkbench() {
     } catch (error) {
       notify(error instanceof Error ? error.message : "作品库加载失败。");
     }
-  }, [authenticated, favoriteSearch, folderFilter, notify]);
+  }, [favoriteSearch, folderFilter, notify]);
 
   async function loadSubmissions() {
-    if (!authenticated) return;
     try {
       const result = await requestJson<ListResponse<SubmissionRecord>>(
         "/api/midjourney-submissions?limit=50",
@@ -1176,22 +1129,13 @@ export function PromptWorkbench() {
           <div><strong>Prompt Craft</strong><small>Midjourney 工作台 · V8.2</small></div>
         </button>
         <div className="v2-top-status">
-          <i className={authenticated ? "online" : ""} />
-          {session.isPending ? "检查会话…" : authenticated ? session.data?.user.email : "访客模式"}
+          <i className="online" />
+          本地工作区
         </div>
         <nav className="v2-top-actions">
           <button type="button" onClick={() => openDrawer("history")}><History size={16} />历史</button>
           <button type="button" onClick={() => openDrawer("library")}><Library size={16} />作品库</button>
           <button type="button" onClick={() => openDrawer("settings")}><Settings2 size={16} />设置</button>
-          {authenticated ? (
-            <button
-              type="button"
-              title="退出登录"
-              onClick={() => void authClient.signOut().then(() => window.location.reload())}
-            ><LogOut size={16} /></button>
-          ) : (
-            <Link href="/signin">登录</Link>
-          )}
         </nav>
       </header>
 
@@ -1209,11 +1153,9 @@ export function PromptWorkbench() {
         <aside className="v2-panel v2-materials">
           <div className="v2-panel-title v2-phrases-title">
             <div><span>PHRASES</span><h2>常用词</h2></div>
-            {authenticated && (
-              <button type="button" aria-label="管理常用词" onClick={() => openDrawer("phrases")}>
-                <Plus size={14} />
-              </button>
-            )}
+            <button type="button" aria-label="管理常用词" onClick={() => openDrawer("phrases")}>
+              <Plus size={14} />
+            </button>
           </div>
           <div className="v2-phrase-tabs" role="tablist" aria-label="常用词来源">
             <button
@@ -1272,9 +1214,7 @@ export function PromptWorkbench() {
             {!visiblePhrases.length && (
               <p>
                 {phraseTab === "personal"
-                  ? authenticated
-                    ? "还没有匹配的个人常用词，可点击右上角加号创建。"
-                    : "登录后可保存并拖动个人常用词。"
+                  ? "还没有匹配的个人常用词，可点击右上角加号创建。"
                   : "没有匹配的默认词条。"}
               </p>
             )}
@@ -1375,7 +1315,7 @@ export function PromptWorkbench() {
               <button type="button" onClick={() => void copy(fullEn, "完整 Prompt")}><Copy size={15} />复制完整 Prompt</button>
               <button type="button" onClick={() => void copy(bodyEn, "英文正文")}><Copy size={15} />只复制英文正文</button>
               <button type="button" onClick={() => void copy(readableBodyZh, "中文描述")}><Copy size={15} />复制中文描述</button>
-              <button type="button" onClick={() => setFavoriteDialog(true)} disabled={!authenticated || !fullEn}>
+              <button type="button" onClick={() => setFavoriteDialog(true)} disabled={!fullEn}>
                 <Heart size={15} />收藏作品
               </button>
               <span className="v2-push-action">
@@ -1393,7 +1333,7 @@ export function PromptWorkbench() {
                   <button
                     key={format}
                     type="button"
-                    disabled={!authenticated || !fullEn}
+                    disabled={!fullEn}
                     onClick={() => {
                       const snapshot = currentSnapshot();
                       if (snapshot) void exportItems(format, { scope: "current", snapshot });
@@ -1467,14 +1407,7 @@ export function PromptWorkbench() {
               ))}
             </nav>
             <div className="v2-drawer-body">
-              {!authenticated ? (
-                <div className="v2-guest-card">
-                  <Archive size={28} />
-                  <h3>登录后使用私人工作区</h3>
-                  <p>常用词、历史、收藏修订和加密服务配置都按账号隔离保存。</p>
-                  <Link href="/signin">前往登录</Link>
-                </div>
-              ) : drawerTab === "phrases" ? (
+              {drawerTab === "phrases" ? (
                 <PhraseManager phrases={phrases} onReload={loadPrivateData} notify={notify} onUse={addPhrase} />
               ) : drawerTab === "history" ? (
                 <RecordList
@@ -1514,7 +1447,6 @@ export function PromptWorkbench() {
                   ai={aiConfigs}
                   translation={translationConfigs}
                   push={pushConfigs}
-                  siteServices={siteServices}
                   onReload={loadPrivateData}
                   notify={notify}
                 />
@@ -2129,42 +2061,30 @@ function SettingsManager({
   ai,
   translation,
   push,
-  siteServices,
   onReload,
   notify,
 }: {
   ai: PublicConfig[];
   translation: PublicConfig[];
   push: PublicConfig[];
-  siteServices: SiteServiceSummary | null;
   onReload: () => Promise<void>;
   notify: (message: string) => void;
 }) {
-  const personalAiActive = ai.some((item) => item.isActive);
-  const personalTranslationActive = translation.some((item) => item.isActive);
   return (
     <div className="v2-settings">
-      <SharedServicesOverview
-        services={siteServices}
-        aiOverridden={personalAiActive}
-        translationOverridden={personalTranslationActive}
-        notify={notify}
-      />
       <ConfigSection
-        title="个人 AI 配置"
-        description="可选。启用后覆盖站点 Ollama；删除或停用后自动恢复站点模型。"
+        title="AI 配置"
+        description="配置云端模型或本机 Ollama，用于生成三个结构化 Prompt 版本。"
         kind="ai"
         items={ai}
-        sharedAvailable={Boolean(siteServices?.ai.configured)}
         onReload={onReload}
         notify={notify}
       />
       <ConfigSection
-        title="个人翻译配置"
-        description="可选。个人服务优先，失败时自动回退到共享 LibreTranslate。"
+        title="翻译配置"
+        description="配置 LibreTranslate、DeepL 或 Google；未配置时保留原文。"
         kind="translation"
         items={translation}
-        sharedAvailable={Boolean(siteServices?.translation.configured)}
         onReload={onReload}
         notify={notify}
       />
@@ -2173,142 +2093,10 @@ function SettingsManager({
         description="Discord Webhook 或自定义 HTTP，仅推送文本，不是官方 Midjourney 下单。"
         kind="push"
         items={push}
-        sharedAvailable={false}
         onReload={onReload}
         notify={notify}
       />
     </div>
-  );
-}
-
-function SharedServicesOverview({
-  services,
-  aiOverridden,
-  translationOverridden,
-  notify,
-}: {
-  services: SiteServiceSummary | null;
-  aiOverridden: boolean;
-  translationOverridden: boolean;
-  notify: (message: string) => void;
-}) {
-  const [testing, setTesting] = useState<"ai" | "translation" | null>(null);
-
-  async function testService(service: "ai" | "translation") {
-    setTesting(service);
-    try {
-      const result = await requestJson<{ message: string; latencyMs: number }>(
-        "/api/site-services/test",
-        {
-          method: "POST",
-          body: JSON.stringify({ service }),
-        },
-      );
-      notify(`${result.message}（${formatLatency(result.latencyMs)}）`);
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "共享服务测试失败。");
-    } finally {
-      setTesting(null);
-    }
-  }
-
-  return (
-    <section className="v2-shared-services">
-      <header>
-        <div>
-          <span className="v2-settings-eyebrow">
-            <ShieldCheck size={14} /> SITE SERVICES
-          </span>
-          <h3>站点共享服务</h3>
-          <p>管理员统一维护，密钥不会发送到浏览器；没有个人覆盖时自动使用。</p>
-        </div>
-        <span className="v2-secure-badge">服务端加密 / 脱敏</span>
-      </header>
-
-      {!services ? (
-        <div className="v2-service-loading">
-          <LoaderCircle className="spin" size={18} /> 正在读取服务状态…
-        </div>
-      ) : (
-        <div className="v2-service-grid">
-          <article className="v2-service-card ai">
-            <header>
-              <span className="v2-service-icon"><Bot size={20} /></span>
-              <div>
-                <small>AI 生成</small>
-                <strong>{services.ai.configured ? services.ai.service : "未配置"}</strong>
-              </div>
-              <span className={services.ai.configured ? "ready" : "missing"}>
-                {aiOverridden
-                  ? "个人配置覆盖中"
-                  : services.ai.configured
-                    ? "当前默认"
-                    : "不可用"}
-              </span>
-            </header>
-            {services.ai.configured ? (
-              <>
-                <dl>
-                  <div><dt>模型</dt><dd>{services.ai.model}</dd></div>
-                  <div><dt>接口</dt><dd>{services.ai.endpoint}</dd></div>
-                  <div><dt>超时</dt><dd>{formatLatency(services.ai.timeoutMs)}</dd></div>
-                  <div><dt>认证</dt><dd>{services.ai.apiKeyConfigured ? "已配置" : "无"}</dd></div>
-                </dl>
-                <p>用于“AI 三版本”，返回简洁、详细、实验性结构化 Prompt。</p>
-                <button
-                  type="button"
-                  disabled={testing !== null}
-                  onClick={() => void testService("ai")}
-                >
-                  {testing === "ai" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
-                  {testing === "ai" ? "模型测试中…" : "测试 AI 连接"}
-                </button>
-              </>
-            ) : (
-              <p className="v2-service-missing">请管理员配置 SITE_AI_* 环境变量。</p>
-            )}
-          </article>
-
-          <article className="v2-service-card translation">
-            <header>
-              <span className="v2-service-icon"><Languages size={20} /></span>
-              <div>
-                <small>自动翻译</small>
-                <strong>{services.translation.configured ? services.translation.service : "未配置"}</strong>
-              </div>
-              <span className={services.translation.configured ? "ready" : "missing"}>
-                {translationOverridden
-                  ? "个人配置优先"
-                  : services.translation.configured
-                    ? "当前默认"
-                    : "不可用"}
-              </span>
-            </header>
-            {services.translation.configured ? (
-              <>
-                <dl>
-                  <div><dt>接口</dt><dd>{services.translation.endpoint}</dd></div>
-                  <div><dt>中文代码</dt><dd>{services.translation.chineseLanguageCode}</dd></div>
-                  <div><dt>认证</dt><dd>{services.translation.apiKeyConfigured ? "已配置" : "无"}</dd></div>
-                  <div><dt>失败策略</dt><dd>保留原文</dd></div>
-                </dl>
-                <p>自动把中文创意和词块翻译为英文；个人服务失败后也会回退到这里。</p>
-                <button
-                  type="button"
-                  disabled={testing !== null}
-                  onClick={() => void testService("translation")}
-                >
-                  {testing === "translation" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
-                  {testing === "translation" ? "翻译测试中…" : "测试翻译连接"}
-                </button>
-              </>
-            ) : (
-              <p className="v2-service-missing">请管理员配置 SHARED_LIBRETRANSLATE_* 环境变量。</p>
-            )}
-          </article>
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -2317,7 +2105,6 @@ function ConfigSection({
   description,
   kind,
   items,
-  sharedAvailable,
   onReload,
   notify,
 }: {
@@ -2325,7 +2112,6 @@ function ConfigSection({
   description: string;
   kind: "ai" | "translation" | "push";
   items: PublicConfig[];
-  sharedAvailable: boolean;
   onReload: () => Promise<void>;
   notify: (message: string) => void;
 }) {
@@ -2356,11 +2142,7 @@ function ConfigSection({
         <span>{items.length} 个</span>
       </header>
       {!items.length && (
-        <p className="v2-config-empty">
-          {sharedAvailable
-            ? "当前没有个人覆盖，正在使用上方的站点共享服务。"
-            : "暂无配置，可按需添加。"}
-        </p>
+        <p className="v2-config-empty">暂无配置，可按需添加。</p>
       )}
       {items.map((item) => (
         <div className="v2-config-item" key={item.id}>
@@ -2573,12 +2355,6 @@ function defaultModelForProvider(provider: string): string {
     minimax: "MiniMax-M2.1",
     custom: "",
   }[provider] ?? "";
-}
-
-function formatLatency(value: number): string {
-  if (value < 1_000) return `${value} ms`;
-  const seconds = value / 1_000;
-  return `${seconds >= 10 ? Math.round(seconds) : seconds.toFixed(1)} 秒`;
 }
 
 function formatDate(value?: string): string {

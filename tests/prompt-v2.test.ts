@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   PARAMETER_REGISTRY,
@@ -27,8 +27,6 @@ import {
   unlockPromptBlockEnglish,
   updatePromptBlockText,
 } from "../lib/prompt";
-import { sharedAiConfig } from "../lib/server/configs";
-
 describe("Prompt v2 blocks and templates", () => {
   it("reconciles legacy --no values into canonical negative blocks", () => {
     const existing = createPromptBlock(
@@ -388,21 +386,7 @@ describe("official parameter registry and normalization", () => {
   });
 });
 
-describe("snapshot compatibility and site AI", () => {
-  const saved = {
-    SITE_AI_PROVIDER: process.env.SITE_AI_PROVIDER,
-    SITE_AI_MODEL: process.env.SITE_AI_MODEL,
-    SITE_AI_API_KEY: process.env.SITE_AI_API_KEY,
-    SITE_AI_ENDPOINT: process.env.SITE_AI_ENDPOINT,
-  };
-
-  afterEach(() => {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  });
-
+describe("snapshot compatibility", () => {
   it("converts a v1 snapshot to v4 blocks without a manual migration", () => {
     const legacy = PromptSnapshotSchema.parse({
       input: {
@@ -499,19 +483,4 @@ describe("snapshot compatibility and site AI", () => {
     expect(migrated.blocks.every((block) => block.textEnMode === "auto")).toBe(true);
   });
 
-  it("reads site AI only when all required secret settings exist", () => {
-    delete process.env.SITE_AI_PROVIDER;
-    delete process.env.SITE_AI_MODEL;
-    delete process.env.SITE_AI_API_KEY;
-    expect(sharedAiConfig()).toBeUndefined();
-    process.env.SITE_AI_PROVIDER = "openai";
-    process.env.SITE_AI_MODEL = "gpt-test";
-    process.env.SITE_AI_API_KEY = "site-secret";
-    const config = sharedAiConfig();
-    expect(config).toMatchObject({
-      provider: "openai",
-      model: "gpt-test",
-      apiKey: "site-secret",
-    });
-  });
 });

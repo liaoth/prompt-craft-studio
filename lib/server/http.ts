@@ -1,7 +1,5 @@
 import { ZodError, type ZodType } from "zod";
 
-import { UnauthorizedError } from "@/lib/server/auth";
-
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -95,12 +93,6 @@ export function ok(data: unknown, init?: ResponseInit): Response {
 }
 
 export function apiError(error: unknown): Response {
-  if (error instanceof UnauthorizedError) {
-    return ok(
-      { error: error.message, code: error.code },
-      { status: error.status },
-    );
-  }
   if (error instanceof ApiError) {
     return ok(
       { error: error.message, code: error.code },
@@ -146,9 +138,24 @@ export function route<TContext = unknown>(
 ) {
   return async (request: Request, context: TContext) => {
     try {
+      assertSameOriginMutation(request);
       return await handler(request, context);
     } catch (error) {
       return apiError(error);
     }
   };
+}
+
+export function assertSameOriginMutation(request: Request): void {
+  if (request.method === "GET" || request.method === "HEAD") return;
+
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+    throw new ApiError(403, "拒绝跨站请求。", "CROSS_SITE_REQUEST");
+  }
+
+  const origin = request.headers.get("origin");
+  if (origin && origin !== new URL(request.url).origin) {
+    throw new ApiError(403, "拒绝跨站请求。", "CROSS_SITE_REQUEST");
+  }
 }

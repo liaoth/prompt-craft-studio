@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { promptHistories } from "@/db/schema";
 import { getDb } from "@/lib/db";
@@ -66,10 +66,6 @@ export async function savePromptHistory(
   const contentHash = promptContentHash(snapshot);
   const db = getDb();
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`,
-    );
-
     const [saved] = await tx
       .insert(promptHistories)
       .values({

@@ -1,101 +1,48 @@
+import { randomUUID } from "node:crypto";
+
 import { relations, sql } from "drizzle-orm";
 import {
-  boolean,
   index,
   integer,
-  jsonb,
-  pgTable,
+  sqliteTable,
   text,
-  timestamp,
   uniqueIndex,
-  uuid,
-  varchar,
-} from "drizzle-orm/pg-core";
+} from "drizzle-orm/sqlite-core";
+
+export const LOCAL_USER_ID = "local-workspace";
 
 const timestamps = {
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .default(sql`(unixepoch() * 1000)`)
     .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .default(sql`(unixepoch() * 1000)`)
     .$onUpdate(() => new Date())
     .notNull(),
 };
 
-// Better Auth core tables. Keep these export names singular because the
-// Better Auth Drizzle adapter resolves models by export key.
-export const user = pgTable("users", {
+const uuid = (name: string) =>
+  text(name)
+    .primaryKey()
+    .$defaultFn(() => randomUUID());
+
+export const user = sqliteTable("users", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
-  emailVerified: boolean("email_verified").default(false).notNull(),
-  image: text("image"),
   ...timestamps,
 });
 
-export const session = pgTable(
-  "sessions",
-  {
-    id: text("id").primaryKey(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    token: text("token").notNull().unique(),
-    ipAddress: text("ip_address"),
-    userAgent: text("user_agent"),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    ...timestamps,
-  },
-  (table) => [index("sessions_user_id_idx").on(table.userId)],
-);
-
-export const account = pgTable(
-  "accounts",
-  {
-    id: text("id").primaryKey(),
-    accountId: text("account_id").notNull(),
-    providerId: text("provider_id").notNull(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    accessToken: text("access_token"),
-    refreshToken: text("refresh_token"),
-    idToken: text("id_token"),
-    accessTokenExpiresAt: timestamp("access_token_expires_at", {
-      withTimezone: true,
-    }),
-    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", {
-      withTimezone: true,
-    }),
-    scope: text("scope"),
-    password: text("password"),
-    ...timestamps,
-  },
-  (table) => [index("accounts_user_id_idx").on(table.userId)],
-);
-
-export const verification = pgTable(
-  "verifications",
-  {
-    id: text("id").primaryKey(),
-    identifier: text("identifier").notNull(),
-    value: text("value").notNull(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    ...timestamps,
-  },
-  (table) => [index("verifications_identifier_idx").on(table.identifier)],
-);
-
-export const phraseSnippets = pgTable(
+export const phraseSnippets = sqliteTable(
   "phrase_snippets",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    name: varchar("name", { length: 80 }).notNull(),
-    category: varchar("category", { length: 50 }).default("未分类").notNull(),
-    content: varchar("content", { length: 500 }).notNull(),
+    name: text("name").notNull(),
+    category: text("category").default("未分类").notNull(),
+    content: text("content").notNull(),
     sortOrder: integer("sort_order").default(0).notNull(),
     ...timestamps,
   },
@@ -104,18 +51,20 @@ export const phraseSnippets = pgTable(
   ],
 );
 
-export const promptHistories = pgTable(
+export const promptHistories = sqliteTable(
   "prompt_histories",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    contentHash: text("content_hash").notNull(),
     promptZh: text("prompt_zh").notNull(),
     promptEn: text("prompt_en").notNull(),
-    source: varchar("source", { length: 16 }).notNull(),
-    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    source: text("source").notNull(),
+    snapshot: text("snapshot", { mode: "json" })
+      .$type<Record<string, unknown>>()
+      .notNull(),
     ...timestamps,
   },
   (table) => [
@@ -130,14 +79,14 @@ export const promptHistories = pgTable(
   ],
 );
 
-export const promptFolders = pgTable(
+export const promptFolders = sqliteTable(
   "prompt_folders",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    name: varchar("name", { length: 120 }).notNull(),
+    name: text("name").notNull(),
     sortOrder: integer("sort_order").default(0).notNull(),
     ...timestamps,
   },
@@ -147,23 +96,25 @@ export const promptFolders = pgTable(
   ],
 );
 
-export const promptFavorites = pgTable(
+export const promptFavorites = sqliteTable(
   "prompt_favorites",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    contentHash: text("content_hash").notNull(),
     promptZh: text("prompt_zh").notNull(),
     promptEn: text("prompt_en").notNull(),
-    source: varchar("source", { length: 16 }).notNull(),
-    title: varchar("title", { length: 160 }).default("未命名作品").notNull(),
-    folderId: uuid("folder_id").references(() => promptFolders.id, {
+    source: text("source").notNull(),
+    title: text("title").default("未命名作品").notNull(),
+    folderId: text("folder_id").references(() => promptFolders.id, {
       onDelete: "set null",
     }),
-    note: varchar("note", { length: 1000 }).default("").notNull(),
-    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    note: text("note").default("").notNull(),
+    snapshot: text("snapshot", { mode: "json" })
+      .$type<Record<string, unknown>>()
+      .notNull(),
     ...timestamps,
   },
   (table) => [
@@ -179,23 +130,25 @@ export const promptFavorites = pgTable(
   ],
 );
 
-export const promptFavoriteRevisions = pgTable(
+export const promptFavoriteRevisions = sqliteTable(
   "prompt_favorite_revisions",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    favoriteId: uuid("favorite_id")
+    favoriteId: text("favorite_id")
       .notNull()
       .references(() => promptFavorites.id, { onDelete: "cascade" }),
     revisionNo: integer("revision_no").notNull(),
-    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    contentHash: text("content_hash").notNull(),
     promptZh: text("prompt_zh").notNull(),
     promptEn: text("prompt_en").notNull(),
-    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
+    snapshot: text("snapshot", { mode: "json" })
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(unixepoch() * 1000)`)
       .notNull(),
   },
   (table) => [
@@ -210,94 +163,102 @@ export const promptFavoriteRevisions = pgTable(
   ],
 );
 
-export const aiProviderConfigs = pgTable(
+export const aiProviderConfigs = sqliteTable(
   "ai_provider_configs",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    label: varchar("label", { length: 80 }).notNull(),
-    provider: varchar("provider", { length: 32 }).notNull(),
-    endpoint: varchar("endpoint", { length: 2048 }).notNull(),
-    model: varchar("model", { length: 120 }).notNull(),
+    label: text("label").notNull(),
+    provider: text("provider").notNull(),
+    endpoint: text("endpoint").notNull(),
+    model: text("model").notNull(),
     credentialEncrypted: text("credential_encrypted").notNull(),
-    isActive: boolean("is_active").default(false).notNull(),
+    isActive: integer("is_active", { mode: "boolean" })
+      .default(false)
+      .notNull(),
     ...timestamps,
   },
   (table) => [
     index("ai_provider_configs_user_idx").on(table.userId),
     uniqueIndex("ai_provider_configs_one_active_uq")
       .on(table.userId)
-      .where(sql`${table.isActive} = true`),
+      .where(sql`${table.isActive} = 1`),
   ],
 );
 
-export const translationConfigs = pgTable(
+export const translationConfigs = sqliteTable(
   "translation_configs",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    label: varchar("label", { length: 80 }).notNull(),
-    provider: varchar("provider", { length: 32 }).notNull(),
-    endpoint: varchar("endpoint", { length: 2048 }).notNull(),
+    label: text("label").notNull(),
+    provider: text("provider").notNull(),
+    endpoint: text("endpoint").notNull(),
     credentialEncrypted: text("credential_encrypted").notNull(),
-    isActive: boolean("is_active").default(false).notNull(),
+    isActive: integer("is_active", { mode: "boolean" })
+      .default(false)
+      .notNull(),
     ...timestamps,
   },
   (table) => [
     index("translation_configs_user_idx").on(table.userId),
     uniqueIndex("translation_configs_one_active_uq")
       .on(table.userId)
-      .where(sql`${table.isActive} = true`),
+      .where(sql`${table.isActive} = 1`),
   ],
 );
 
-export const midjourneyProviderConfigs = pgTable(
+export const midjourneyProviderConfigs = sqliteTable(
   "midjourney_provider_configs",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    label: varchar("label", { length: 80 }).notNull(),
-    provider: varchar("provider", { length: 32 }).notNull(),
-    endpoint: varchar("endpoint", { length: 2048 }).notNull(),
+    label: text("label").notNull(),
+    provider: text("provider").notNull(),
+    endpoint: text("endpoint").notNull(),
     credentialEncrypted: text("credential_encrypted").notNull(),
-    isActive: boolean("is_active").default(false).notNull(),
+    isActive: integer("is_active", { mode: "boolean" })
+      .default(false)
+      .notNull(),
     ...timestamps,
   },
   (table) => [
     index("midjourney_provider_configs_user_idx").on(table.userId),
     uniqueIndex("midjourney_provider_configs_one_active_uq")
       .on(table.userId)
-      .where(sql`${table.isActive} = true`),
+      .where(sql`${table.isActive} = 1`),
   ],
 );
 
-export const midjourneySubmissions = pgTable(
+export const midjourneySubmissions = sqliteTable(
   "midjourney_submissions",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
+    id: uuid("id"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    providerConfigId: uuid("provider_config_id")
-      .references(() => midjourneyProviderConfigs.id, {
-        onDelete: "set null",
-      }),
-    contentHash: varchar("content_hash", { length: 64 }).notNull(),
+    providerConfigId: text("provider_config_id").references(
+      () => midjourneyProviderConfigs.id,
+      { onDelete: "set null" },
+    ),
+    contentHash: text("content_hash").notNull(),
     promptZh: text("prompt_zh").notNull(),
     promptEn: text("prompt_en").notNull(),
-    status: varchar("status", { length: 16 }).notNull(),
+    status: text("status").notNull(),
     errorMessage: text("error_message"),
-    providerResponse: jsonb("provider_response").$type<
+    providerResponse: text("provider_response", { mode: "json" }).$type<
       Record<string, unknown>
     >(),
-    source: varchar("source", { length: 16 }).notNull(),
-    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    source: text("source").notNull(),
+    snapshot: text("snapshot", { mode: "json" })
+      .$type<Record<string, unknown>>()
+      .notNull(),
     ...timestamps,
   },
   (table) => [
@@ -314,8 +275,6 @@ export const midjourneySubmissions = pgTable(
 );
 
 export const userRelations = relations(user, ({ many }) => ({
-  sessions: many(session),
-  accounts: many(account),
   phrases: many(phraseSnippets),
   histories: many(promptHistories),
   folders: many(promptFolders),
@@ -325,12 +284,4 @@ export const userRelations = relations(user, ({ many }) => ({
   translationConfigs: many(translationConfigs),
   midjourneyProviderConfigs: many(midjourneyProviderConfigs),
   midjourneySubmissions: many(midjourneySubmissions),
-}));
-
-export const sessionRelations = relations(session, ({ one }) => ({
-  user: one(user, { fields: [session.userId], references: [user.id] }),
-}));
-
-export const accountRelations = relations(account, ({ one }) => ({
-  user: one(user, { fields: [account.userId], references: [user.id] }),
 }));

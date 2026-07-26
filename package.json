@@ -2,56 +2,58 @@
   "name": "prompt-craft-studio",
   "version": "1.0.0",
   "private": true,
+  "description": "A local bilingual Midjourney prompt workspace.",
+  "author": "Prompt Craft Studio",
+  "main": "electron/main.cjs",
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
-    "postinstall": "node scripts/patch-vinext-static-cache.mjs",
-    "dev": "vinext dev",
-    "build": "vinext build",
-    "start": "vinext start",
+    "predev": "node scripts/prepare-local-data.mjs",
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build && node scripts/prepare-standalone.mjs",
+    "prestart": "node scripts/prepare-local-data.mjs",
+    "start": "next start --hostname 127.0.0.1",
+    "desktop:dev": "concurrently -k -s first \"npm:dev\" \"wait-on http-get://127.0.0.1:3000/api/health && cross-env ELECTRON_START_URL=http://127.0.0.1:3000 electron .\"",
+    "desktop:unpacked": "npm run build && electron-builder --dir",
+    "dist:win": "npm run build && electron-builder --win nsis portable",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern release --ignore-pattern output",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "node scripts/prepare-local-data.mjs",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "better-auth": "^1.6.25",
+    "@libsql/client": "^0.17.4",
     "drizzle-orm": "0.45.2",
     "lucide-react": "^1.26.0",
     "next": "16.2.11",
-    "nodemailer": "^9.0.3",
-    "pg": "^8.22.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.46.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
-    "@types/nodemailer": "^8.0.1",
-    "@types/pg": "^8.20.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.2",
-    "@vitejs/plugin-rsc": "0.5.26",
+    "concurrently": "^10.0.4",
+    "cross-env": "^10.1.0",
     "drizzle-kit": "0.31.10",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.11",
-    "react-server-dom-webpack": "19.2.8",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "vinext": "0.0.50",
-    "vite": "8.1.5",
     "vitest": "^4.1.10",
-    "wrangler": "4.113.0"
+    "wait-on": "^9.1.0"
   },
   "overrides": {
     "brace-expansion": "5.0.8",
@@ -59,5 +61,49 @@
     "postcss": "8.5.22",
     "sharp": "0.35.3"
   },
-  "type": "module"
+  "type": "module",
+  "build": {
+    "appId": "com.promptcraft.studio",
+    "productName": "Prompt Craft Studio",
+    "artifactName": "Prompt-Craft-Studio-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "app-server"
+      },
+      {
+        "from": ".next/standalone/node_modules",
+        "to": "app-server/node_modules"
+      }
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Graphics",
+      "maintainer": "Prompt Craft Studio"
+    }
+  }
 }

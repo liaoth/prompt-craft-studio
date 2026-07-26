@@ -1,1 +1,1 @@
-export { getDb, getPool } from "@/lib/db";
+export { getClient, getDb } from "@/lib/db";

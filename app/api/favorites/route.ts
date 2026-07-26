@@ -1,4 +1,4 @@
-import { and, count, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, like } from "drizzle-orm";
 
 import {
   promptFavoriteRevisions,
@@ -19,7 +19,7 @@ export const GET = route(async (request) => {
   const search = url.searchParams.get("search")?.trim().slice(0, 160);
   const folder = url.searchParams.get("folder");
   const conditions = [eq(promptFavorites.userId, current.user.id)];
-  if (search) conditions.push(ilike(promptFavorites.title, `%${search}%`));
+  if (search) conditions.push(like(promptFavorites.title, `%${search}%`));
   if (folder === "unfiled") conditions.push(isNull(promptFavorites.folderId));
   else if (folder) conditions.push(eq(promptFavorites.folderId, idSchema.parse(folder)));
   const where = and(...conditions);
@@ -70,9 +70,6 @@ export const POST = route(async (request) => {
   const contentHash = promptContentHash(snapshot);
   const db = getDb();
   const item = await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`favorite:${current.user.id}`}, 0))`,
-    );
     if (input.folderId) {
       const [folder] = await tx
         .select({ id: promptFolders.id })

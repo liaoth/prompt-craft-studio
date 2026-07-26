@@ -4,16 +4,17 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+import { localEncryptionKeyPath } from "@/lib/local-paths";
 
 const ENVELOPE_VERSION = "v1";
 const IV_BYTES = 12;
 
-function encryptionKey(raw = process.env.APP_ENCRYPTION_KEY): Buffer {
-  if (!raw) {
-    throw new Error("APP_ENCRYPTION_KEY 未配置。");
-  }
-
-  const value = raw.trim();
+function encryptionKey(raw?: string): Buffer {
+  const value = (
+    raw ?? readFileSync(localEncryptionKeyPath(), "utf8")
+  ).trim();
   if (/^[a-fA-F0-9]{64}$/.test(value)) {
     return Buffer.from(value, "hex");
   }
@@ -24,7 +25,7 @@ function encryptionKey(raw = process.env.APP_ENCRYPTION_KEY): Buffer {
   }
 
   throw new Error(
-    "APP_ENCRYPTION_KEY 必须是 64 位十六进制或 Base64 编码的 32 字节密钥。",
+    "本地加密密钥必须是 64 位十六进制或 Base64 编码的 32 字节密钥。",
   );
 }
 

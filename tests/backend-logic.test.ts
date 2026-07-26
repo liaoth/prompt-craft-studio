@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   decryptSecret,
@@ -35,12 +35,12 @@ import {
   batchDeleteSchema,
   phraseUpdateSchema,
 } from "../lib/server/validation";
+import {
+  ApiError,
+  assertSameOriginMutation,
+} from "../lib/server/http";
 
 const TEST_KEY = Buffer.alloc(32, 7).toString("base64");
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 describe("credential encryption", () => {
   it("round trips through AES-256-GCM without exposing plaintext", () => {
@@ -64,11 +64,10 @@ describe("credential encryption", () => {
   });
 
   it("encrypts endpoints at rest and supports legacy plaintext rows", () => {
-    vi.stubEnv("APP_ENCRYPTION_KEY", TEST_KEY);
     const endpoint = "https://discord.com/api/webhooks/123/secret-token";
-    const encrypted = encryptedEndpoint(endpoint);
+    const encrypted = encryptedEndpoint(endpoint, TEST_KEY);
     expect(encrypted).not.toContain("discord.com");
-    expect(decryptedEndpoint(encrypted)).toBe(endpoint);
+    expect(decryptedEndpoint(encrypted, TEST_KEY)).toBe(endpoint);
     expect(decryptedEndpoint(endpoint)).toBe(endpoint);
   });
 });
@@ -147,15 +146,21 @@ describe("provider endpoint validation", () => {
     ).resolves.toBe(false);
   });
 
-  it("always rejects localhost/private addresses", async () => {
+  it("allows loopback services and rejects other private addresses", async () => {
     await expect(
       validateEndpointUrl("http://localhost:5000/v1", {
         development: true,
         resolveDns: false,
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBe(true);
     await expect(
       validateEndpointUrl("http://localhost:5000/v1", {
+        development: false,
+        resolveDns: false,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      validateEndpointUrl("http://192.168.1.20:11434/v1", {
         development: false,
         resolveDns: false,
       }),
@@ -165,36 +170,66 @@ describe("provider endpoint validation", () => {
     expect(isPublicIp("fd00::1")).toBe(false);
   });
 
-  it("allows only the exact operator-controlled local AI endpoint", async () => {
-    vi.stubEnv(
-      "SITE_AI_ENDPOINT",
-      "http://host.docker.internal:11434/v1/chat/completions",
-    );
+  it("allows loopback AI endpoints without environment configuration", async () => {
     await expect(
       validateAiEndpointUrl(
-        "http://host.docker.internal:11434/v1/chat/completions",
+        "http://127.0.0.1:11434/v1/chat/completions",
       ),
     ).resolves.toBe(true);
     await expect(
-      validateAiEndpointUrl("http://host.docker.internal:11434/api/generate"),
+      validateAiEndpointUrl("http://192.168.1.20:11434/api/generate"),
     ).resolves.toBe(false);
   });
 
-  it("requires an operator allowlist for production custom hosts", async () => {
-    await expect(
-      validateEndpointUrl("https://models.example.test/v1", {
-        development: false,
-        resolveDns: false,
-      }),
-    ).resolves.toBe(false);
-
-    vi.stubEnv("CUSTOM_ENDPOINT_HOST_ALLOWLIST", "models.example.test");
+  it("allows public HTTPS custom hosts without an operator allowlist", async () => {
     await expect(
       validateEndpointUrl("https://models.example.test/v1", {
         development: false,
         resolveDns: false,
       }),
     ).resolves.toBe(true);
+  });
+});
+
+describe("same-origin write protection", () => {
+  it("accepts same-origin writes and non-browser requests", () => {
+    expect(() =>
+      assertSameOriginMutation(
+        new Request("http://127.0.0.1:3000/api/history", {
+          method: "POST",
+          headers: {
+            origin: "http://127.0.0.1:3000",
+            "sec-fetch-site": "same-origin",
+          },
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertSameOriginMutation(
+        new Request("http://127.0.0.1:3000/api/history", {
+          method: "POST",
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects cross-site writes", () => {
+    try {
+      assertSameOriginMutation(
+        new Request("http://127.0.0.1:3000/api/history", {
+          method: "POST",
+          headers: {
+            origin: "https://attacker.example",
+            "sec-fetch-site": "cross-site",
+          },
+        }),
+      );
+      throw new Error("expected cross-site request to be rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).status).toBe(403);
+      expect((error as ApiError).code).toBe("CROSS_SITE_REQUEST");
+    }
   });
 });
 

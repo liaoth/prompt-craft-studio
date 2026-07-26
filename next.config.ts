@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "1mb",
     },
   },
+  serverExternalPackages: ["@libsql/client", "libsql"],
 };
 
 export default nextConfig;

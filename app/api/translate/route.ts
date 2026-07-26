@@ -5,10 +5,7 @@ import { translationConfigs } from "@/db/schema";
 import { getDb } from "@/lib/db";
 import { translateText } from "@/lib/prompt";
 import { requireSession } from "@/lib/server/auth";
-import {
-  sharedTranslationConfig,
-  translationConfigFromRow,
-} from "@/lib/server/configs";
+import { translationConfigFromRow } from "@/lib/server/configs";
 import {
   safeProviderFetch,
   validateTranslationEndpointUrl,
@@ -46,10 +43,7 @@ export const POST = route(async (request) => {
 
   const result = await translateText({
     ...input,
-    config: active
-      ? translationConfigFromRow(active)
-      : sharedTranslationConfig(),
-    sharedLibreTranslateConfig: sharedTranslationConfig(),
+    config: active ? translationConfigFromRow(active) : undefined,
     fetchImpl: safeProviderFetch,
     validateEndpoint: validateTranslationEndpointUrl,
     timeoutMs: 30_000,
