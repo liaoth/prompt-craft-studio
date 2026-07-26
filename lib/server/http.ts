@@ -149,13 +149,61 @@ export function route<TContext = unknown>(
 export function assertSameOriginMutation(request: Request): void {
   if (request.method === "GET" || request.method === "HEAD") return;
 
+  const origin = request.headers.get("origin");
+  const originAllowed = origin ? isAllowedMutationOrigin(request, origin) : false;
   const fetchSite = request.headers.get("sec-fetch-site");
-  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+  if (
+    fetchSite &&
+    fetchSite !== "same-origin" &&
+    fetchSite !== "none" &&
+    !originAllowed
+  ) {
     throw new ApiError(403, "拒绝跨站请求。", "CROSS_SITE_REQUEST");
   }
 
-  const origin = request.headers.get("origin");
-  if (origin && origin !== new URL(request.url).origin) {
+  if (origin && !originAllowed) {
     throw new ApiError(403, "拒绝跨站请求。", "CROSS_SITE_REQUEST");
   }
+}
+
+function isAllowedMutationOrigin(request: Request, rawOrigin: string): boolean {
+  let origin: URL;
+  let requestUrl: URL;
+  try {
+    origin = new URL(rawOrigin);
+    requestUrl = new URL(request.url);
+  } catch {
+    return false;
+  }
+
+  if (origin.origin === requestUrl.origin) return true;
+
+  // Next.js standalone may expose its internal URL as localhost while the
+  // browser uses the actual Host header selected by the Electron launcher.
+  const host = request.headers.get("host");
+  if (host) {
+    try {
+      const hostOrigin = new URL(`${requestUrl.protocol}//${host}`);
+      if (origin.origin === hostOrigin.origin) return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return (
+    origin.protocol === requestUrl.protocol &&
+    effectivePort(origin) === effectivePort(requestUrl) &&
+    isLoopbackHost(origin.hostname) &&
+    isLoopbackHost(requestUrl.hostname)
+  );
+}
+
+function effectivePort(url: URL): string {
+  if (url.port) return url.port;
+  return url.protocol === "https:" ? "443" : "80";
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
 }

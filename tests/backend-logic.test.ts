@@ -213,6 +213,33 @@ describe("same-origin write protection", () => {
     ).not.toThrow();
   });
 
+  it("accepts the Electron loopback origin when Next uses an internal URL", () => {
+    expect(() =>
+      assertSameOriginMutation(
+        new Request("http://localhost:3000/api/provider-configs/test", {
+          method: "POST",
+          headers: {
+            host: "127.0.0.1:43125",
+            origin: "http://127.0.0.1:43125",
+            "sec-fetch-site": "same-origin",
+          },
+        }),
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      assertSameOriginMutation(
+        new Request("http://localhost:43125/api/provider-configs/test", {
+          method: "POST",
+          headers: {
+            origin: "http://127.0.0.1:43125",
+            "sec-fetch-site": "cross-site",
+          },
+        }),
+      ),
+    ).not.toThrow();
+  });
+
   it("rejects cross-site writes", () => {
     try {
       assertSameOriginMutation(
