@@ -10,6 +10,8 @@
   },
   "scripts": {
     "predev": "node scripts/prepare-local-data.mjs",
+    "icons:generate": "node scripts/generate-icons.mjs",
+    "prebuild": "node scripts/generate-icons.mjs",
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build && node scripts/prepare-standalone.mjs",
     "prestart": "node scripts/prepare-local-data.mjs",
@@ -86,13 +88,6 @@
     ],
     "asar": true,
     "npmRebuild": false,
-    "win": {
-      "signAndEditExecutable": false,
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
@@ -102,8 +97,17 @@
         "AppImage",
         "deb"
       ],
+      "icon": "build/icon.png",
       "category": "Graphics",
       "maintainer": "Prompt Craft Studio"
+    },
+    "win": {
+      "signExecutable": false,
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
     }
   }
 }

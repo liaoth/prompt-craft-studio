@@ -19,6 +19,8 @@
 /out/
 /output/
 /release/
+/build/icon.png
+/build/icon.ico
 
 # misc
 .DS_Store
