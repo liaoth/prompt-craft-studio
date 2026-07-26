@@ -52,6 +52,7 @@ import {
 import {
   providersForKind,
   serviceConfigHelp,
+  type ServiceConfigKind,
   type ServiceConfigHelp,
 } from "@/lib/service-config-help";
 import {
@@ -1454,6 +1455,15 @@ export function PromptWorkbench() {
                   translation={translationConfigs}
                   push={pushConfigs}
                   onReload={reloadPrivateData}
+                  onDeleted={(kind, id) => {
+                    if (kind === "ai") {
+                      setAiConfigs((current) => current.filter((item) => item.id !== id));
+                    } else if (kind === "translation") {
+                      setTranslationConfigs((current) => current.filter((item) => item.id !== id));
+                    } else {
+                      setPushConfigs((current) => current.filter((item) => item.id !== id));
+                    }
+                  }}
                   notify={notify}
                 />
               )}
@@ -2068,12 +2078,14 @@ function SettingsManager({
   translation,
   push,
   onReload,
+  onDeleted,
   notify,
 }: {
   ai: PublicConfig[];
   translation: PublicConfig[];
   push: PublicConfig[];
   onReload: () => Promise<void>;
+  onDeleted: (kind: ServiceConfigKind, id: string) => void;
   notify: (message: string) => void;
 }) {
   return (
@@ -2084,6 +2096,7 @@ function SettingsManager({
         kind="ai"
         items={ai}
         onReload={onReload}
+        onDeleted={(id) => onDeleted("ai", id)}
         notify={notify}
       />
       <ConfigSection
@@ -2092,6 +2105,7 @@ function SettingsManager({
         kind="translation"
         items={translation}
         onReload={onReload}
+        onDeleted={(id) => onDeleted("translation", id)}
         notify={notify}
       />
       <ConfigSection
@@ -2100,6 +2114,7 @@ function SettingsManager({
         kind="push"
         items={push}
         onReload={onReload}
+        onDeleted={(id) => onDeleted("push", id)}
         notify={notify}
       />
     </div>
@@ -2112,13 +2127,15 @@ function ConfigSection({
   kind,
   items,
   onReload,
+  onDeleted,
   notify,
 }: {
   title: string;
   description: string;
-  kind: "ai" | "translation" | "push";
+  kind: ServiceConfigKind;
   items: PublicConfig[];
   onReload: () => Promise<void>;
+  onDeleted: (id: string) => void;
   notify: (message: string) => void;
 }) {
   const defaults =
@@ -2139,30 +2156,26 @@ function ConfigSection({
     item: PublicConfig;
     index: number;
   } | null>(null);
-  const [confirmedDeleteId, setConfirmedDeleteId] = useState<string | null>(null);
   const pendingActionRef = useRef(false);
   const createDetailsRef = useRef<HTMLDetailsElement>(null);
   const selectedHelp = serviceConfigHelp(selectedProvider);
   const providerOptions = providersForKind(kind);
   const busy = pendingAction !== null;
   const visibleItems = useMemo(() => {
-    const reloadedItems = confirmedDeleteId
-      ? items.filter((item) => item.id !== confirmedDeleteId)
-      : items;
     if (
       !deletingSnapshot ||
-      reloadedItems.some((item) => item.id === deletingSnapshot.item.id)
+      items.some((item) => item.id === deletingSnapshot.item.id)
     ) {
-      return reloadedItems;
+      return items;
     }
-    const next = [...reloadedItems];
+    const next = [...items];
     next.splice(
       Math.min(deletingSnapshot.index, next.length),
       0,
       deletingSnapshot.item,
     );
     return next;
-  }, [confirmedDeleteId, deletingSnapshot, items]);
+  }, [deletingSnapshot, items]);
 
   function selectProvider(provider: string) {
     setSelectedProvider(provider);
@@ -2210,7 +2223,7 @@ function ConfigSection({
         <div className="v2-config-progress" role="status" aria-live="polite">
           <LoaderCircle className="spin" size={15} />
           <span>
-            正在删除“{deletingSnapshot.item.label}”，完成前此配置区暂不可操作。
+            正在删除“{deletingSnapshot.item.label}”，删除完成后将立即恢复操作。
           </span>
         </div>
       )}
@@ -2287,14 +2300,12 @@ function ConfigSection({
                 onClick={() => {
                   if (pendingActionRef.current) return;
                   if (!window.confirm(`确定删除配置“${item.label}”吗？`)) return;
-                  setConfirmedDeleteId(null);
                   setDeletingSnapshot({ item, index });
                   void runConfigAction(
                     `delete:${item.id}`,
                     async () => {
                       await requestJson(`${base}/${item.id}`, { method: "DELETE" });
-                      await onReload();
-                      setConfirmedDeleteId(item.id);
+                      onDeleted(item.id);
                     },
                     "配置已删除。",
                     () => setDeletingSnapshot(null),

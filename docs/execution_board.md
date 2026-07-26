@@ -15,7 +15,7 @@ Deliver `feat/local-standalone`: a single-user local SQLite application and Elec
 | Remove Docker/Vinext/Cloudflare/Sites configuration | Deployment chain is standard Next.js plus Electron |
 | Add desktop shell | `electron/main.cjs`, hardened BrowserWindow, embedded standalone server |
 | Add Windows/Linux packaging | electron-builder NSIS/portable/AppImage/deb targets and native-runner workflow |
-| Harden configuration deletion lifecycle | Delete progress state keeps the row visible through API deletion and a successful reload; controls recover together |
+| Harden configuration deletion lifecycle | Delete progress keeps the row visible through the DELETE response, then commits local list state and restores controls without a full workspace reload |
 | Add dedicated local Ollama entry | AI settings expose a one-click Ollama preset with loopback endpoint, model default, and no API key requirement |
 | Preserve local business APIs | History, favorites, revisions, folders, phrases, provider configs, health |
 | Add local security boundaries | Loopback server, private-address rejection, same-origin write checks |
