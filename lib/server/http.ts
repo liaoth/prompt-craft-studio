@@ -112,12 +112,8 @@ export function apiError(error: unknown): Response {
       { status: 400 },
     );
   }
-  if (
-    error instanceof Error &&
-    error.name === "AiProviderError" &&
-    "code" in error
-  ) {
-    const code = String((error as Error & { code: unknown }).code);
+  if (isAiProviderError(error)) {
+    const code = error.code;
     const status =
       code === "INVALID_CONFIG" || code === "UNSAFE_ENDPOINT" ? 400 : 502;
     return ok(
@@ -130,6 +126,22 @@ export function apiError(error: unknown): Response {
   return ok(
     { error: "服务器暂时无法处理此请求。", code: "INTERNAL_ERROR" },
     { status: 500 },
+  );
+}
+
+function isAiProviderError(
+  error: unknown,
+): error is { name: "AiProviderError"; message: string; code: string } {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as {
+    name?: unknown;
+    message?: unknown;
+    code?: unknown;
+  };
+  return (
+    candidate.name === "AiProviderError" &&
+    typeof candidate.message === "string" &&
+    typeof candidate.code === "string"
   );
 }
 

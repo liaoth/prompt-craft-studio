@@ -93,6 +93,9 @@ export async function savePromptHistory(
       .from(promptHistories)
       .where(eq(promptHistories.userId, userId))
       .orderBy(desc(promptHistories.updatedAt), desc(promptHistories.id))
+      // SQLite requires LIMIT when OFFSET is present. A very large limit
+      // preserves the “all remaining rows” semantics used by this prune query.
+      .limit(2_147_483_647)
       .offset(HISTORY_LIMIT);
 
     if (overflow.length) {

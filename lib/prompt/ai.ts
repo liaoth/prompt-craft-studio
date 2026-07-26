@@ -40,8 +40,8 @@ const AiVariantSchema = z
     id: PromptVariantKindSchema,
     promptZh: z.string().trim().min(1).max(PROMPT_OUTPUT_MAX_LENGTH),
     promptEn: z.string().trim().min(1).max(PROMPT_OUTPUT_MAX_LENGTH),
-    fieldsZh: PromptFieldsSchema,
-    fieldsEn: PromptFieldsSchema,
+    fieldsZh: PromptFieldsSchema.partial().default({}),
+    fieldsEn: PromptFieldsSchema.partial().default({}),
   })
   .strict();
 
@@ -202,12 +202,18 @@ export async function generateAiPrompt(input: GenerateAiPromptInput): Promise<Pr
     }
 
     const variants = structured.data.variants.map<PromptVariant>((item) => {
-      const candidateBlocks = fieldsToBlocks(item.fieldsZh, item.fieldsEn, "ai").map(
-        (block) => ({
-          ...block,
-          id: `${item.id}-${block.id}`,
-        }),
-      );
+      let candidateBlocks = fieldsToBlocks(item.fieldsZh, item.fieldsEn, "ai");
+      if (!candidateBlocks.length) {
+        candidateBlocks = fieldsToBlocks(
+          { subject: item.promptZh },
+          { subject: item.promptEn },
+          "ai",
+        );
+      }
+      candidateBlocks = candidateBlocks.map((block) => ({
+        ...block,
+        id: `${item.id}-${block.id}`,
+      }));
       const reconciled = reconcileNegativeBlocks(
         candidateBlocks,
         configuration.parameters,
@@ -408,12 +414,36 @@ function parseStructuredOutput(
 ):
   | { success: true; data: z.infer<typeof AiStructuredOutputSchema> }
   | { success: false; error: string } {
+  const candidates = [
+    rawOutput.trim(),
+    rawOutput
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim(),
+  ];
+  const firstObject = rawOutput.indexOf("{");
+  const lastObject = rawOutput.lastIndexOf("}");
+  if (firstObject >= 0 && lastObject > firstObject) {
+    candidates.push(rawOutput.slice(firstObject, lastObject + 1));
+  }
+
   let json: unknown;
-  try {
-    json = JSON.parse(rawOutput);
-  } catch {
+  let parsedJson = false;
+  for (const candidate of candidates) {
+    try {
+      json = JSON.parse(candidate);
+      parsedJson = true;
+      break;
+    } catch {
+      // Try the next common model-output wrapper.
+    }
+  }
+  if (!parsedJson) {
     return { success: false, error: "输出不是合法 JSON。" };
   }
+
+  json = normalizeStructuredOutput(json);
   const parsed = AiStructuredOutputSchema.safeParse(json);
   if (!parsed.success) {
     return {
@@ -425,6 +455,25 @@ function parseStructuredOutput(
     };
   }
   return { success: true, data: parsed.data };
+}
+
+function normalizeStructuredOutput(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.variants)) return value;
+
+  return {
+    ...value,
+    // Smaller local models sometimes repeat a variant label as a string
+    // before emitting the actual object. Those markers carry no data.
+    variants: value.variants
+      .filter((variant): variant is Record<string, unknown> => isRecord(variant))
+      .map((variant) => ({
+        ...variant,
+        promptZh: variant.promptZh ?? variant.prompt_zh,
+        promptEn: variant.promptEn ?? variant.prompt_en,
+        fieldsZh: variant.fieldsZh ?? variant.fields_zh ?? {},
+        fieldsEn: variant.fieldsEn ?? variant.fields_en ?? {},
+      })),
+  };
 }
 
 function buildUserPrompt(idea: string, fields: PromptFields): string {

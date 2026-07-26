@@ -231,6 +231,53 @@ describe("AI structured generation", () => {
     expect(String(secondRequest.body)).toContain("上一次输出未通过");
     expect(String(secondRequest.body)).not.toContain("secret-test-key");
   });
+
+  it("accepts common local-model wrappers and fills missing field objects", async () => {
+    const content = JSON.stringify({
+      variants: [
+        {
+          id: "concise",
+          promptZh: "紫色玻璃魔棒",
+          promptEn: "purple glass magic wand",
+        },
+        "detailed",
+        {
+          id: "detailed",
+          promptZh: "精致的紫色玻璃魔棒",
+          promptEn: "a delicate purple glass magic wand",
+          fieldsZh: { subject: "紫色玻璃魔棒" },
+          fieldsEn: { subject: "purple glass magic wand" },
+        },
+        "experimental",
+        {
+          id: "experimental",
+          promptZh: "漂浮的紫色玻璃魔棒",
+          promptEn: "a floating purple glass magic wand",
+        },
+      ],
+    });
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content } }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const result = await generateAiPrompt({
+      config: {
+        provider: "custom",
+        apiKey: "ollama",
+        model: "qwen2.5:3b",
+        endpoint: "http://127.0.0.1:11434/v1/chat/completions",
+      },
+      idea: "紫色玻璃魔棒",
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result.variants).toHaveLength(3);
+    expect(result.variants[0]?.bodyEn).toBe("purple glass magic wand");
+  });
 });
 
 describe("AI provider connection test", () => {
