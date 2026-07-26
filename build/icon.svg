@@ -1,27 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="surface" x1="122" y1="96" x2="902" y2="940" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#252B3D"/>
-      <stop offset="1" stop-color="#1B2030"/>
+    <linearGradient id="ui-primary" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7D6EF2"/>
+      <stop offset="1" stop-color="#5D7EEA"/>
     </linearGradient>
-    <linearGradient id="wand" x1="330" y1="730" x2="718" y2="342" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#9B91FF"/>
-      <stop offset="1" stop-color="#D8D2FF"/>
-    </linearGradient>
-    <filter id="glow" x="210" y="220" width="620" height="620" filterUnits="userSpaceOnUse">
-      <feGaussianBlur stdDeviation="18" result="blur"/>
-      <feColorMatrix in="blur" values="0.45 0 0 0 0.37 0 0.4 0 0 0.31 0 0 0.9 0 1 0 0 0 0.38 0"/>
-    </filter>
   </defs>
 
-  <rect x="18" y="18" width="988" height="988" rx="232" fill="url(#surface)" stroke="#596078" stroke-width="12"/>
-  <path d="M264 760 700 324" stroke="#8178E8" stroke-linecap="round" stroke-width="78" opacity=".28" filter="url(#glow)"/>
-  <path d="M292 756 704 344" stroke="url(#wand)" stroke-linecap="round" stroke-width="34"/>
-  <path d="m296 724-48 48" stroke="#A59DFF" stroke-linecap="round" stroke-width="34"/>
-
-  <path d="m714 246 22 64 64 22-64 22-22 64-22-64-64-22 64-22 22-64Z" fill="#DAD4FF"/>
-  <path d="m574 330 12 36 36 12-36 12-12 36-12-36-36-12 36-12 12-36Z" fill="#B7AEFF"/>
-  <path d="m442 518 9 27 27 9-27 9-9 27-9-27-27-9 27-9 9-27Z" fill="#938AFF"/>
-  <circle cx="350" cy="642" r="11" fill="#DAD4FF"/>
-  <circle cx="516" cy="476" r="8" fill="#A59DFF"/>
+  <rect width="1024" height="1024" rx="230" fill="url(#ui-primary)"/>
+  <g
+    transform="translate(293 293) scale(18.25)"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d="m21.64 3.64-1.28-1.28a1.25 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/>
+    <path d="m14 7 3 3"/>
+    <path d="M5 6v4"/>
+    <path d="M19 14v4"/>
+    <path d="M10 2v2"/>
+    <path d="M7 8H3"/>
+    <path d="M21 16h-4"/>
+    <path d="M11 3H9"/>
+  </g>
 </svg>
