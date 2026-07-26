@@ -12,6 +12,8 @@ if (!(await exists(serverEntry))) {
 }
 
 await rm(path.join(standaloneRoot, "data"), { recursive: true, force: true });
+await rm(path.join(standaloneRoot, "output"), { recursive: true, force: true });
+await rm(path.join(standaloneRoot, "release"), { recursive: true, force: true });
 await materializeLinks(standaloneRoot);
 
 await copyDirectory(
@@ -21,6 +23,10 @@ await copyDirectory(
 await copyDirectory(
   path.join(repositoryRoot, "public"),
   path.join(standaloneRoot, "public"),
+);
+await copyDirectory(
+  path.join(repositoryRoot, "node_modules", "drizzle-orm"),
+  path.join(standaloneRoot, "node_modules", "drizzle-orm"),
 );
 await copyDirectory(
   path.join(repositoryRoot, "drizzle"),
