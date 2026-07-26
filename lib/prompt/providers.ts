@@ -10,6 +10,7 @@ export const AI_PROVIDER_IDS = [
   "zhipu",
   "kimi",
   "minimax",
+  "ollama",
   "custom",
 ] as const;
 
@@ -19,7 +20,7 @@ export type AiProviderId = z.infer<typeof AiProviderIdSchema>;
 export const AiProviderConfigSchema = z
   .object({
     provider: AiProviderIdSchema,
-    apiKey: z.string().min(1).max(8_192),
+    apiKey: z.string().max(8_192).default(""),
     model: z.string().trim().min(1).max(200),
     endpoint: z.url().optional(),
   })
@@ -30,6 +31,13 @@ export const AiProviderConfigSchema = z
         code: "custom",
         path: ["endpoint"],
         message: "自定义 OpenAI 兼容供应商必须提供 endpoint。",
+      });
+    }
+    if (config.provider !== "ollama" && !config.apiKey) {
+      context.addIssue({
+        code: "custom",
+        path: ["apiKey"],
+        message: "云端模型必须提供 API Key。",
       });
     }
   });
@@ -110,6 +118,13 @@ export const PROVIDER_REGISTRY: Readonly<Record<AiProviderId, ProviderDefinition
     protocol: "openai-compatible",
     defaultModel: "MiniMax-M2.1",
     defaultEndpoint: "https://api.minimax.io/v1/chat/completions",
+  },
+  ollama: {
+    id: "ollama",
+    label: "本地 Ollama",
+    protocol: "openai-compatible",
+    defaultModel: "qwen2.5:3b",
+    defaultEndpoint: "http://127.0.0.1:11434/v1/chat/completions",
   },
   custom: {
     id: "custom",

@@ -19,14 +19,14 @@ The directory contains:
 
 ## AI services
 
-OpenAI, DeepSeek, Anthropic, Gemini, Moonshot, OpenRouter, Groq, Ollama, and OpenAI-compatible endpoints are supported. Enter a name, endpoint, model, and API key, then test the connection.
+OpenAI, DeepSeek, Anthropic, Gemini, Moonshot, OpenRouter, Groq, Ollama, and OpenAI-compatible endpoints are supported. Cloud providers require a name, endpoint, model, and API key. For local Ollama, click “Add local Ollama”; the API key can remain empty.
 
 Ollama example:
 
 ```text
 Endpoint: http://127.0.0.1:11434/v1/chat/completions
 Model: qwen2.5:7b
-API Key: ollama
+API Key: leave empty
 ```
 
 ## Translation

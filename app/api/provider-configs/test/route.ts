@@ -7,7 +7,7 @@ import { generateAiPrompt } from "@/lib/prompt";
 import { requireSession } from "@/lib/server/auth";
 import {
   aiConfigFromRow,
-  providerConfigCreateSchema,
+  providerConfigFieldsSchema,
   resolveAiEndpoint,
 } from "@/lib/server/configs";
 import {
@@ -23,7 +23,7 @@ import { ApiError, ok, readJson, route } from "@/lib/server/http";
 
 const testSchema = z.union([
   z.object({ id: z.uuid() }),
-  providerConfigCreateSchema.omit({ label: true, isActive: true }),
+  providerConfigFieldsSchema,
 ]);
 
 export const POST = route(async (request) => {

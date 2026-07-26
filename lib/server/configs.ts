@@ -15,8 +15,7 @@ import { decryptSecret, encryptSecret, maskSecret } from "@/lib/crypto";
 import { ApiError } from "@/lib/server/http";
 import { maskEndpoint } from "@/lib/server/endpoints";
 
-export const providerConfigCreateSchema = z.object({
-  label: z.string().trim().min(1).max(80),
+export const providerConfigFieldsSchema = z.object({
   provider: z.enum([
     "openai",
     "anthropic",
@@ -27,18 +26,31 @@ export const providerConfigCreateSchema = z.object({
     "zhipu",
     "kimi",
     "minimax",
+    "ollama",
     "custom",
   ]),
   model: z.string().trim().min(1).max(120),
   endpoint: z.url().max(500).optional(),
-  apiKey: z.string().trim().min(1).max(8192),
+  apiKey: z.string().trim().max(8192).default(""),
+});
+
+export const providerConfigCreateSchema = providerConfigFieldsSchema.extend({
+  label: z.string().trim().min(1).max(80),
   isActive: z.boolean().default(true),
+}).superRefine((value, context) => {
+  if (value.provider !== "ollama" && !value.apiKey) {
+    context.addIssue({
+      code: "custom",
+      path: ["apiKey"],
+      message: "云端模型必须提供 API Key。",
+    });
+  }
 });
 
 export const providerConfigUpdateSchema = z
   .object({
     label: z.string().trim().min(1).max(80).optional(),
-    provider: providerConfigCreateSchema.shape.provider.optional(),
+    provider: providerConfigFieldsSchema.shape.provider.optional(),
     model: z.string().trim().min(1).max(120).optional(),
     endpoint: z.url().max(500).optional(),
     apiKey: z.string().trim().min(1).max(8192).optional(),

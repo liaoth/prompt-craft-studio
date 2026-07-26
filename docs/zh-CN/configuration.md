@@ -19,14 +19,14 @@
 
 ## AI 服务
 
-支持 OpenAI、DeepSeek、Anthropic、Gemini、Moonshot、OpenRouter、Groq、Ollama 与 OpenAI 兼容接口。填写服务名称、Endpoint、模型和 API Key 后测试连接。
+支持 OpenAI、DeepSeek、Anthropic、Gemini、Moonshot、OpenRouter、Groq、Ollama 与 OpenAI 兼容接口。云端服务填写服务名称、Endpoint、模型和 API Key；本地 Ollama 可直接点击“添加本地 Ollama”，无需填写 API Key。
 
 Ollama 示例：
 
 ```text
 Endpoint: http://127.0.0.1:11434/v1/chat/completions
 Model: qwen2.5:7b
-API Key: ollama
+API Key: 留空
 ```
 
 ## 翻译服务

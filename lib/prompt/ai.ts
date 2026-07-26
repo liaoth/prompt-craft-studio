@@ -345,6 +345,9 @@ function buildHeaders(
   if (protocol === "gemini") {
     return { "content-type": "application/json", "x-goog-api-key": config.apiKey };
   }
+  if (config.provider === "ollama") {
+    return { "content-type": "application/json" };
+  }
   return {
     "content-type": "application/json",
     authorization: `Bearer ${config.apiKey}`,

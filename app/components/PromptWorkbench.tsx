@@ -27,6 +27,7 @@ import {
   Heart,
   History,
   Library,
+  Laptop,
   LoaderCircle,
   Menu,
   Plus,
@@ -476,7 +477,7 @@ export function PromptWorkbench() {
   }, [phraseCategory, phraseItems, phraseQuery]);
   const displayedPhrases = visiblePhrases.slice(0, phraseLimit);
 
-  const loadPrivateData = useCallback(async () => {
+  const loadPrivateData = useCallback(async (options?: { throwOnError?: boolean }) => {
     setPrivateLoading(true);
     try {
       const [phraseData, folderData, configA, configT, configM] =
@@ -494,10 +495,15 @@ export function PromptWorkbench() {
       setPushConfigs(configM.items);
     } catch (error) {
       notify(error instanceof Error ? error.message : "本地数据加载失败。");
+      if (options?.throwOnError) throw error;
     } finally {
       setPrivateLoading(false);
     }
   }, [notify]);
+
+  const reloadPrivateData = useCallback(async () => {
+    await loadPrivateData({ throwOnError: true });
+  }, [loadPrivateData]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadPrivateData(), 0);
@@ -1447,7 +1453,7 @@ export function PromptWorkbench() {
                   ai={aiConfigs}
                   translation={translationConfigs}
                   push={pushConfigs}
-                  onReload={loadPrivateData}
+                  onReload={reloadPrivateData}
                   notify={notify}
                 />
               )}
@@ -2125,22 +2131,59 @@ function ConfigSection({
   const [selectedProvider, setSelectedProvider] = useState(defaults.provider);
   const [modelValue, setModelValue] = useState(defaults.model);
   const [labelValue, setLabelValue] = useState(defaults.label);
+  const [endpointValue, setEndpointValue] = useState(defaults.endpoint);
+  const [apiKeyValue, setApiKeyValue] = useState(defaults.apiKey);
   const [expandedHelpId, setExpandedHelpId] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [deletingSnapshot, setDeletingSnapshot] = useState<{
+    item: PublicConfig;
+    index: number;
+  } | null>(null);
+  const [confirmedDeleteId, setConfirmedDeleteId] = useState<string | null>(null);
   const pendingActionRef = useRef(false);
+  const createDetailsRef = useRef<HTMLDetailsElement>(null);
   const selectedHelp = serviceConfigHelp(selectedProvider);
   const providerOptions = providersForKind(kind);
+  const busy = pendingAction !== null;
+  const visibleItems = useMemo(() => {
+    const reloadedItems = confirmedDeleteId
+      ? items.filter((item) => item.id !== confirmedDeleteId)
+      : items;
+    if (
+      !deletingSnapshot ||
+      reloadedItems.some((item) => item.id === deletingSnapshot.item.id)
+    ) {
+      return reloadedItems;
+    }
+    const next = [...reloadedItems];
+    next.splice(
+      Math.min(deletingSnapshot.index, next.length),
+      0,
+      deletingSnapshot.item,
+    );
+    return next;
+  }, [confirmedDeleteId, deletingSnapshot, items]);
 
   function selectProvider(provider: string) {
     setSelectedProvider(provider);
     setLabelValue(providerLabel(provider));
     if (kind === "ai") setModelValue(defaultModelForProvider(provider));
+    setEndpointValue(defaultEndpointForProvider(provider));
+    setApiKeyValue("");
+  }
+
+  function openCreateForm(provider = defaults.provider) {
+    selectProvider(provider);
+    requestAnimationFrame(() => {
+      if (createDetailsRef.current) createDetailsRef.current.open = true;
+    });
   }
 
   async function runConfigAction(
     actionKey: string,
     action: () => Promise<void>,
     successMessage?: string,
+    onSettled?: () => void,
   ) {
     if (pendingActionRef.current) return;
     pendingActionRef.current = true;
@@ -2152,99 +2195,147 @@ function ConfigSection({
       notify(error instanceof Error ? error.message : "配置操作失败。");
     } finally {
       pendingActionRef.current = false;
+      onSettled?.();
       setPendingAction(null);
     }
   }
 
   return (
-    <section className="v2-config-section">
+    <section className="v2-config-section" aria-busy={busy}>
       <header className="v2-config-heading">
         <div><h3>{title}</h3><p>{description}</p></div>
-        <span>{items.length} 个</span>
+        <span>{visibleItems.length} 个</span>
       </header>
-      {!items.length && (
+      {pendingAction?.startsWith("delete:") && deletingSnapshot && (
+        <div className="v2-config-progress" role="status" aria-live="polite">
+          <LoaderCircle className="spin" size={15} />
+          <span>
+            正在删除“{deletingSnapshot.item.label}”，完成前此配置区暂不可操作。
+          </span>
+        </div>
+      )}
+      {!visibleItems.length && (
         <p className="v2-config-empty">暂无配置，可按需添加。</p>
       )}
-      {items.map((item) => (
-        <div className="v2-config-item" key={item.id}>
-          <article>
-            <div>
-              <strong>{item.label}</strong>
-              <small>
-                {[providerLabel(item.provider), item.model, item.endpoint, item.apiKeyMasked || "无密钥"]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </small>
-            </div>
-            {item.isActive && <span>已启用</span>}
-            <button
-              type="button"
-              aria-expanded={expandedHelpId === item.id}
-              onClick={() => setExpandedHelpId((current) => current === item.id ? null : item.id)}
-            >
-              <CircleAlert size={13} />配置说明
-            </button>
-            <button
-              type="button"
-              disabled={pendingAction !== null}
-              onClick={() => void runConfigAction(
-                `toggle:${item.id}`,
-                async () => {
-                  await requestJson(`${base}/${item.id}`, {
-                    method: "PATCH",
-                    body: JSON.stringify({ isActive: !item.isActive }),
-                  });
-                  await onReload();
-                },
-                item.isActive ? "配置已停用。" : "配置已启用。",
-              )}
-            >
-              {pendingAction === `toggle:${item.id}` && (
-                <LoaderCircle className="spin" size={13} />
-              )}
-              {item.isActive ? "停用" : "启用"}
-            </button>
-            <button
-              type="button"
-              disabled={pendingAction !== null}
-              onClick={() => void runConfigAction(
-                `test:${item.id}`,
-                async () => {
-                  await requestJson(`${base}/test`, {
-                    method: "POST",
-                    body: JSON.stringify({ id: item.id }),
-                  });
-                },
-                "连接测试成功。",
-              )}
-            >
-              {pendingAction === `test:${item.id}` && (
-                <LoaderCircle className="spin" size={13} />
-              )}
-              测试
-            </button>
-            <button type="button" disabled={pendingAction !== null} onClick={() => {
-              if (!window.confirm(`确定删除配置“${item.label}”吗？`)) return;
-              void runConfigAction(
-                `delete:${item.id}`,
-                async () => {
-                  await requestJson(`${base}/${item.id}`, { method: "DELETE" });
-                  await onReload();
-                },
-                "配置已删除。",
-              );
-            }} aria-label={`删除配置 ${item.label}`}><Trash2 size={13} /></button>
-          </article>
-          {expandedHelpId === item.id && (
-            <ProviderSetupHelpPanel help={serviceConfigHelp(item.provider)} compact />
-          )}
-        </div>
-      ))}
-      <details className="v2-config-create">
-        <summary><Plus size={14} />添加{kind === "ai" ? "个人模型" : kind === "translation" ? "个人翻译" : "推送入口"}</summary>
+      {visibleItems.map((item, index) => {
+        const deleting = pendingAction === `delete:${item.id}`;
+        return (
+          <div
+            className={`v2-config-item${deleting ? " is-deleting" : ""}`}
+            key={item.id}
+          >
+            <article>
+              <div>
+                <strong>{item.label}</strong>
+                <small>
+                  {[providerLabel(item.provider), item.model, item.endpoint, item.apiKeyMasked || "无密钥"]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </small>
+              </div>
+              {item.isActive && <span>已启用</span>}
+              <button
+                type="button"
+                disabled={busy}
+                aria-expanded={expandedHelpId === item.id}
+                onClick={() => setExpandedHelpId((current) => current === item.id ? null : item.id)}
+              >
+                <CircleAlert size={13} />配置说明
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runConfigAction(
+                  `toggle:${item.id}`,
+                  async () => {
+                    await requestJson(`${base}/${item.id}`, {
+                      method: "PATCH",
+                      body: JSON.stringify({ isActive: !item.isActive }),
+                    });
+                    await onReload();
+                  },
+                  item.isActive ? "配置已停用。" : "配置已启用。",
+                )}
+              >
+                {pendingAction === `toggle:${item.id}` && (
+                  <LoaderCircle className="spin" size={13} />
+                )}
+                {item.isActive ? "停用" : "启用"}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runConfigAction(
+                  `test:${item.id}`,
+                  async () => {
+                    await requestJson(`${base}/test`, {
+                      method: "POST",
+                      body: JSON.stringify({ id: item.id }),
+                    });
+                  },
+                  "连接测试成功。",
+                )}
+              >
+                {pendingAction === `test:${item.id}` && (
+                  <LoaderCircle className="spin" size={13} />
+                )}
+                测试
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  if (pendingActionRef.current) return;
+                  if (!window.confirm(`确定删除配置“${item.label}”吗？`)) return;
+                  setConfirmedDeleteId(null);
+                  setDeletingSnapshot({ item, index });
+                  void runConfigAction(
+                    `delete:${item.id}`,
+                    async () => {
+                      await requestJson(`${base}/${item.id}`, { method: "DELETE" });
+                      await onReload();
+                      setConfirmedDeleteId(item.id);
+                    },
+                    "配置已删除。",
+                    () => setDeletingSnapshot(null),
+                  );
+                }}
+                aria-label={`删除配置 ${item.label}`}
+              >
+                {deleting
+                  ? <LoaderCircle className="spin" size={13} />
+                  : <Trash2 size={13} />}
+              </button>
+            </article>
+            {expandedHelpId === item.id && (
+              <ProviderSetupHelpPanel help={serviceConfigHelp(item.provider)} compact />
+            )}
+          </div>
+        );
+      })}
+      {kind === "ai" && (
+        <button
+          className="v2-config-local-entry"
+          type="button"
+          disabled={busy}
+          onClick={() => openCreateForm("ollama")}
+        >
+          <Laptop size={15} />
+          添加本地 Ollama
+          <small>127.0.0.1:11434</small>
+        </button>
+      )}
+      <details className="v2-config-create" ref={createDetailsRef}>
+        <summary
+          aria-disabled={busy}
+          onClick={(event) => {
+            if (busy) event.preventDefault();
+          }}
+        >
+          <Plus size={14} />添加{kind === "ai" ? "个人模型" : kind === "translation" ? "个人翻译" : "推送入口"}
+        </summary>
         <ProviderSetupHelpPanel help={selectedHelp} />
         <form
-          key={`${kind}-${items.length}-${selectedProvider}`}
           onSubmit={(event) => {
             event.preventDefault();
             if (pendingAction) return;
@@ -2265,10 +2356,11 @@ function ConfigSection({
                   method: "POST",
                   body: JSON.stringify(payload),
                 });
-                formElement.reset();
                 setSelectedProvider(defaults.provider);
                 setLabelValue(defaults.label);
                 setModelValue(defaults.model);
+                setEndpointValue(defaults.endpoint);
+                setApiKeyValue(defaults.apiKey);
                 await onReload();
               },
               "配置已加密保存。",
@@ -2281,6 +2373,7 @@ function ConfigSection({
               value={labelValue}
               onChange={(event) => setLabelValue(event.target.value)}
               placeholder={`例如：我的 ${providerLabel(selectedProvider)}`}
+              disabled={busy}
               required
             />
           </label>
@@ -2289,6 +2382,7 @@ function ConfigSection({
               name="provider"
               value={selectedProvider}
               onChange={(event) => selectProvider(event.target.value)}
+              disabled={busy}
             >
               {providerOptions.map((item) => (
                 <option key={item} value={item}>{providerLabel(item)}</option>
@@ -2302,6 +2396,7 @@ function ConfigSection({
                 value={modelValue}
                 onChange={(event) => setModelValue(event.target.value)}
                 placeholder={selectedHelp.modelPlaceholder}
+                disabled={busy}
                 required
               />
             </label>
@@ -2309,19 +2404,24 @@ function ConfigSection({
           <label className="wide">接口地址
             <input
               name="endpoint"
-              defaultValue={defaults.endpoint}
+              value={endpointValue}
+              onChange={(event) => setEndpointValue(event.target.value)}
               type="url"
               placeholder={selectedHelp.endpointPlaceholder}
+              disabled={busy}
               required={kind === "push" || selectedProvider === "custom"}
             />
           </label>
           <label className="wide">API Key
             <input
               name="apiKey"
+              value={apiKeyValue}
+              onChange={(event) => setApiKeyValue(event.target.value)}
               type="password"
               placeholder={selectedHelp.apiKeyPlaceholder}
+              disabled={busy}
               required={
-                kind === "ai" ||
+                (kind === "ai" && selectedProvider !== "ollama") ||
                 selectedProvider === "deepl" ||
                 selectedProvider === "google"
               }
@@ -2398,6 +2498,7 @@ function providerLabel(provider: string): string {
     zhipu: "智谱",
     kimi: "Kimi",
     minimax: "MiniMax",
+    ollama: "本地 Ollama",
     custom: "OpenAI 兼容",
     libretranslate: "LibreTranslate",
     deepl: "DeepL",
@@ -2418,8 +2519,15 @@ function defaultModelForProvider(provider: string): string {
     zhipu: "glm-4-flash",
     kimi: "moonshot-v1-8k",
     minimax: "MiniMax-M2.1",
+    ollama: "qwen2.5:3b",
     custom: "",
   }[provider] ?? "";
+}
+
+function defaultEndpointForProvider(provider: string): string {
+  return provider === "ollama"
+    ? "http://127.0.0.1:11434/v1/chat/completions"
+    : "";
 }
 
 function formatDate(value?: string): string {

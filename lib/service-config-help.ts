@@ -188,6 +188,25 @@ const HELP: Readonly<Record<string, ServiceConfigHelp>> = {
     docsUrl: "https://platform.minimaxi.com/docs/api-reference/api-overview",
     keyUrl: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
   },
+  ollama: {
+    provider: "ollama",
+    title: "本地 Ollama",
+    summary: "连接本机 Ollama 的 OpenAI 兼容接口，数据请求只发送到你的电脑。",
+    steps: [
+      "安装并启动 Ollama，确认托盘或命令行服务正在运行。",
+      "使用 ollama list 查看已下载模型的精确名称。",
+      "确认模型已下载，例如：ollama pull qwen2.5:3b。",
+      "填写模型名称并保存；本地 Ollama 不需要 API Key，保存后点测试。",
+    ],
+    endpoint: "默认使用 http://127.0.0.1:11434/v1/chat/completions",
+    endpointPlaceholder: "http://127.0.0.1:11434/v1/chat/completions",
+    model: "填写 ollama list 输出的模型名称。",
+    modelPlaceholder: "例如：qwen2.5:3b",
+    apiKey: "本地 Ollama 默认不需要 API Key，可留空。",
+    apiKeyPlaceholder: "本地 Ollama 无需填写",
+    docsUrl: "https://docs.ollama.com/api/openai-compatibility",
+    caution: "仅允许本机回环地址；如果 Ollama 未启动，测试会提示无法连接。",
+  },
   custom: {
     provider: "custom",
     title: "自定义 OpenAI 兼容 / Ollama",
@@ -309,6 +328,7 @@ export function providersForKind(kind: ServiceConfigKind): readonly string[] {
       "zhipu",
       "kimi",
       "minimax",
+      "ollama",
       "custom",
     ];
   }

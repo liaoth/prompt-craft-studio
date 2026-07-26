@@ -24,6 +24,7 @@ import {
 import {
   decryptedEndpoint,
   encryptedEndpoint,
+  providerConfigCreateSchema,
   providerConfigUpdateSchema,
   translationConfigUpdateSchema,
 } from "../lib/server/configs";
@@ -379,7 +380,7 @@ describe("record deletion and configuration help", () => {
       ...providersForKind("translation"),
       ...providersForKind("push"),
     ];
-    expect(providers).toHaveLength(15);
+    expect(providers).toHaveLength(16);
     for (const provider of providers) {
       const help = serviceConfigHelp(provider);
       expect(help.provider).toBe(provider);
@@ -389,5 +390,15 @@ describe("record deletion and configuration help", () => {
       if (help.docsUrl) expect(help.docsUrl).toMatch(/^https:\/\//);
       if (help.keyUrl) expect(help.keyUrl).toMatch(/^https:\/\//);
     }
+  });
+
+  it("provides a keyless local Ollama configuration with safe defaults", () => {
+    const config = providerConfigCreateSchema.parse({
+      label: "本地 Ollama",
+      provider: "ollama",
+      model: "qwen2.5:3b",
+    });
+    expect(config.apiKey).toBe("");
+    expect(config.endpoint).toBeUndefined();
   });
 });

@@ -4839,6 +4839,64 @@ select:disabled {
   background: #201d2b;
 }
 
+.v2-config-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #6d6250;
+  border-radius: 9px;
+  padding: 9px 11px;
+  color: #f1d7a7;
+  background: rgba(241, 181, 91, .08);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.v2-config-local-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 9px;
+  border: 1px solid #6b61a0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #f0ecff;
+  background:
+    linear-gradient(110deg, rgba(139, 123, 255, .18), rgba(139, 123, 255, .05)),
+    #242034;
+  cursor: pointer;
+  font-weight: 650;
+  text-align: left;
+}
+
+.v2-config-local-entry:hover:not(:disabled) {
+  border-color: #a99cff;
+  background:
+    linear-gradient(110deg, rgba(139, 123, 255, .28), rgba(139, 123, 255, .09)),
+    #2b2541;
+}
+
+.v2-config-local-entry:active:not(:disabled) {
+  transform: translateY(1px) scale(.99);
+}
+
+.v2-config-local-entry:disabled {
+  cursor: wait;
+  opacity: .58;
+}
+
+.v2-config-local-entry small {
+  margin-left: auto;
+  color: #bdb5de;
+  font: 500 10px var(--font-geist-mono);
+}
+
+.v2-config-item.is-deleting > article {
+  border-color: #6d6250;
+  background: rgba(241, 181, 91, .06);
+}
+
 .v2-config-create {
   border: 1px solid #49445d;
   border-radius: 11px;
@@ -4961,6 +5019,11 @@ select:disabled {
 .v2-config-create > summary:hover {
   color: #fff;
   background: rgba(139, 123, 255, .1);
+}
+
+.v2-config-create > summary[aria-disabled="true"] {
+  cursor: wait;
+  opacity: .58;
 }
 
 .v2-drawer > nav button:hover {
