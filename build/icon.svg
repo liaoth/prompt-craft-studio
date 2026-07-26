@@ -1,16 +1,65 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="ui-primary" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7D6EF2"/>
-      <stop offset="1" stop-color="#5D7EEA"/>
+    <clipPath id="tile">
+      <rect x="128" y="128" width="768" height="768" rx="234.667"/>
+    </clipPath>
+    <linearGradient id="glass-body" x1="8%" y1="2%" x2="92%" y2="100%">
+      <stop stop-color="#34354E" stop-opacity=".94"/>
+      <stop offset=".48" stop-color="#202638" stop-opacity=".92"/>
+      <stop offset="1" stop-color="#111923" stop-opacity=".96"/>
+    </linearGradient>
+    <linearGradient id="ui-brand" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop stop-color="#8B7BFF" stop-opacity=".32"/>
+      <stop offset="1" stop-color="#42C9FF" stop-opacity=".1"/>
+    </linearGradient>
+    <linearGradient id="glass-shine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop stop-color="#FFFFFF" stop-opacity=".17"/>
+      <stop offset=".48" stop-color="#FFFFFF" stop-opacity=".035"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="glass-border" x1="8%" y1="4%" x2="92%" y2="100%">
+      <stop stop-color="#C6BEFF" stop-opacity=".62"/>
+      <stop offset=".45" stop-color="#8B7BFF" stop-opacity=".38"/>
+      <stop offset="1" stop-color="#66839D" stop-opacity=".34"/>
     </linearGradient>
   </defs>
 
-  <rect width="1024" height="1024" rx="230" fill="url(#ui-primary)"/>
-  <g
-    transform="translate(293 293) scale(18.25)"
+  <!-- The 36px UI brand tile, scaled inside the 48px screenshot crop. -->
+  <rect x="128" y="128" width="768" height="768" rx="234.667" fill="#111522" fill-opacity=".9"/>
+  <rect x="128" y="128" width="768" height="768" rx="234.667" fill="url(#glass-body)"/>
+  <rect x="128" y="128" width="768" height="768" rx="234.667" fill="url(#ui-brand)"/>
+  <rect x="128" y="128" width="768" height="430" fill="url(#glass-shine)" clip-path="url(#tile)"/>
+  <path
+    d="M190 128h285L260 896H128V454Z"
+    fill="#FFFFFF"
+    fill-opacity=".035"
+    clip-path="url(#tile)"
+  />
+  <rect
+    x="138"
+    y="138"
+    width="748"
+    height="748"
+    rx="225"
+    fill="none"
+    stroke="url(#glass-border)"
+    stroke-width="20"
+  />
+  <rect
+    x="151"
+    y="151"
+    width="722"
+    height="722"
+    rx="212"
     fill="none"
     stroke="#FFFFFF"
+    stroke-opacity=".075"
+    stroke-width="5"
+  />
+  <g
+    transform="translate(288 288) scale(18.6667)"
+    fill="none"
+    stroke="#B6AAFF"
     stroke-width="2"
     stroke-linecap="round"
     stroke-linejoin="round"
