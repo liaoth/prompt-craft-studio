@@ -19,7 +19,7 @@ Deliver `feat/local-standalone`: a single-user local SQLite application and Elec
 | Harden configuration deletion lifecycle | In-app confirmation avoids native-dialog input blocking; delete progress keeps the target row visible and marks only that row busy while other rows and the add form remain interactive |
 | Add dedicated local Ollama entry | AI settings expose a one-click Ollama preset with loopback endpoint, model default, and no API key requirement |
 | Improve phrase and history interactions | Default/custom phrase categories, consistent controls, history copy, full-group drop targeting, and cursor-aligned drag previews |
-| Unify persistent deletion and phrase gestures | History, favorites, folders, phrases, and provider configs use the same in-app confirmation layer; phrase cards expose separate click-to-add and drag-handle controls |
+| Unify persistent deletion and phrase gestures | History, favorites, folders, phrases, and provider configs use the same in-app confirmation layer; default phrase cards are full-card drag sources while personal phrases retain click-to-add |
 | Preserve local business APIs | History, favorites, revisions, folders, phrases, provider configs, health |
 | Add local security boundaries | Loopback server, private-address rejection, same-origin write checks |
 | Rewrite bilingual documentation | Install, source development, data backup, providers, packaging, and troubleshooting |

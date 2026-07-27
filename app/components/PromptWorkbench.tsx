@@ -26,7 +26,6 @@ import {
   Download,
   ExternalLink,
   FolderPlus,
-  GripVertical,
   Heart,
   History,
   Library,
@@ -1265,7 +1264,12 @@ export function PromptWorkbench() {
           </div>
           <div className="v2-quick-phrases">
             {displayedPhrases.map((phrase) => (
-              <DraggablePhrase key={`${phrase.source}-${phrase.id}`} phrase={phrase} onUse={addPhrase} />
+              <DraggablePhrase
+                key={`${phrase.source}-${phrase.id}`}
+                phrase={phrase}
+                onUse={addPhrase}
+                clickToAdd={phrase.source === "personal"}
+              />
             ))}
             {!visiblePhrases.length && (
               <p>
@@ -1682,49 +1686,36 @@ function DraggablePhrase({
   phrase,
   onUse,
   compact = false,
+  clickToAdd = true,
 }: {
   phrase: PhraseLibraryItem;
   onUse: (phrase: PhraseLibraryItem) => void;
   compact?: boolean;
+  clickToAdd?: boolean;
 }) {
-  const {
-    attributes,
-    listeners,
-    setActivatorNodeRef,
-    setNodeRef,
-    isDragging,
-  } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `phrase-${phrase.source}-${phrase.id}`,
     data: { type: "phrase", phrase },
   });
   return (
-    <div
+    <button
       ref={setNodeRef}
+      type="button"
       className={`v2-draggable-phrase${compact ? " compact" : ""}${isDragging ? " is-dragging" : ""}`}
+      onClick={clickToAdd ? () => onUse(phrase) : undefined}
+      aria-label={
+        clickToAdd
+          ? `添加或拖动常用词 ${phrase.name}`
+          : `拖动常用词 ${phrase.name}`
+      }
+      title={clickToAdd ? "点击添加，或拖动到指定结构化分组" : "拖动到指定结构化分组"}
+      {...attributes}
+      {...listeners}
     >
-      <button
-        type="button"
-        className="v2-draggable-phrase-use"
-        onClick={() => onUse(phrase)}
-        aria-label={`添加常用词 ${phrase.name}`}
-        title="点击添加到结构化词块"
-      >
-        <small>{phrase.category}</small>
-        <strong>{phrase.name}</strong>
-        {!compact && <span>{phrase.content}</span>}
-      </button>
-      <button
-        ref={setActivatorNodeRef}
-        type="button"
-        className="v2-draggable-phrase-handle"
-        aria-label={`拖动常用词 ${phrase.name}`}
-        title="拖动到指定结构化分组"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={15} />
-      </button>
-    </div>
+      <small>{phrase.category}</small>
+      <strong>{phrase.name}</strong>
+      {!compact && <span>{phrase.content}</span>}
+    </button>
   );
 }
 
