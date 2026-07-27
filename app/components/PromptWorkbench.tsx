@@ -26,6 +26,7 @@ import {
   Download,
   ExternalLink,
   FolderPlus,
+  GripVertical,
   Heart,
   History,
   Library,
@@ -45,6 +46,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -1607,6 +1609,75 @@ function DragPreview({ item }: { item: ActiveDragItem }) {
   );
 }
 
+function DeleteConfirmationDialog({
+  title,
+  description,
+  pending = false,
+  confirmLabel = "确认删除",
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  description: string;
+  pending?: boolean;
+  confirmLabel?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const titleId = useId();
+  const descriptionId = useId();
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="v2-modal-backdrop v2-delete-confirm-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !pending) onCancel();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !pending) onCancel();
+      }}
+    >
+      <section
+        className="v2-modal v2-delete-confirm"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        aria-busy={pending}
+      >
+        <header>
+          <span aria-hidden="true"><Trash2 size={18} /></span>
+          <div>
+            <small>删除确认</small>
+            <h2 id={titleId}>{title}</h2>
+          </div>
+        </header>
+        <p id={descriptionId}>{description}</p>
+        <div>
+          <button type="button" onClick={onCancel} disabled={pending} autoFocus>
+            取消
+          </button>
+          <button
+            className="danger"
+            type="button"
+            onClick={onConfirm}
+            disabled={pending}
+          >
+            {pending
+              ? <LoaderCircle className="spin" size={14} />
+              : <Trash2 size={14} />}
+            {pending ? "删除中…" : confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
 function DraggablePhrase({
   phrase,
   onUse,
@@ -1616,23 +1687,44 @@ function DraggablePhrase({
   onUse: (phrase: PhraseLibraryItem) => void;
   compact?: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    isDragging,
+  } = useDraggable({
     id: `phrase-${phrase.source}-${phrase.id}`,
     data: { type: "phrase", phrase },
   });
   return (
-    <button
+    <div
       ref={setNodeRef}
-      type="button"
       className={`v2-draggable-phrase${compact ? " compact" : ""}${isDragging ? " is-dragging" : ""}`}
-      onClick={() => onUse(phrase)}
-      {...attributes}
-      {...listeners}
     >
-      <small>{phrase.category}</small>
-      <strong>{phrase.name}</strong>
-      {!compact && <span>{phrase.content}</span>}
-    </button>
+      <button
+        type="button"
+        className="v2-draggable-phrase-use"
+        onClick={() => onUse(phrase)}
+        aria-label={`添加常用词 ${phrase.name}`}
+        title="点击添加到结构化词块"
+      >
+        <small>{phrase.category}</small>
+        <strong>{phrase.name}</strong>
+        {!compact && <span>{phrase.content}</span>}
+      </button>
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        className="v2-draggable-phrase-handle"
+        aria-label={`拖动常用词 ${phrase.name}`}
+        title="拖动到指定结构化分组"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={15} />
+      </button>
+    </div>
   );
 }
 
@@ -1652,6 +1744,8 @@ function RecordList({
   notify: (message: string) => void;
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleteRequest, setDeleteRequest] = useState<string[] | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
   const currentIds = records.map((record) => record.id);
   const effectiveSelected = selectedIds.filter((id) => currentIds.includes(id));
   const allSelected = records.length > 0 && effectiveSelected.length === records.length;
@@ -1662,14 +1756,9 @@ function RecordList({
     );
   }
 
-  async function deleteRecords(ids: string[]) {
+  async function confirmDeleteRecords(ids: string[]) {
     if (!ids.length) return;
-    const confirmed = window.confirm(
-      ids.length === 1
-        ? "确定删除这条生成历史吗？删除后无法恢复。"
-        : `确定批量删除已选择的 ${ids.length} 条历史吗？删除后无法恢复。`,
-    );
-    if (!confirmed) return;
+    setDeletePending(true);
     try {
       if (ids.length === 1) {
         await requestJson(`/api/history/${ids[0]}`, { method: "DELETE" });
@@ -1682,8 +1771,11 @@ function RecordList({
       setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
       await onReload();
       notify(ids.length === 1 ? "历史记录已删除。" : `已删除 ${ids.length} 条历史记录。`);
+      setDeleteRequest(null);
     } catch (error) {
       notify(error instanceof Error ? error.message : "历史删除失败。");
+    } finally {
+      setDeletePending(false);
     }
   }
 
@@ -1704,7 +1796,7 @@ function RecordList({
           className="danger"
           type="button"
           disabled={!effectiveSelected.length}
-          onClick={() => void deleteRecords(effectiveSelected)}
+          onClick={() => setDeleteRequest([...effectiveSelected])}
         >
           <Trash2 size={14} />批量删除
         </button>
@@ -1732,13 +1824,22 @@ function RecordList({
               <button type="button" onClick={() => onCopy(record)}>
                 <Copy size={14} />复制 Prompt
               </button>
-              <button className="danger" type="button" onClick={() => void deleteRecords([record.id])}>
+              <button className="danger" type="button" onClick={() => setDeleteRequest([record.id])}>
                 <Trash2 size={14} />删除
               </button>
             </div>
           </article>
         ))}
       </div>
+      {deleteRequest && (
+        <DeleteConfirmationDialog
+          title={deleteRequest.length === 1 ? "删除这条生成历史？" : `删除 ${deleteRequest.length} 条生成历史？`}
+          description="删除后无法恢复。确认完成前记录会保持显示，避免误以为界面卡住。"
+          pending={deletePending}
+          onCancel={() => setDeleteRequest(null)}
+          onConfirm={() => void confirmDeleteRecords(deleteRequest)}
+        />
+      )}
     </div>
   );
 }
@@ -1758,6 +1859,8 @@ function PhraseManager({
   const [query, setQuery] = useState("");
   const [categoryChoice, setCategoryChoice] = useState("");
   const [customCategory, setCustomCategory] = useState("");
+  const [deleteCandidate, setDeleteCandidate] = useState<PhraseSnippet | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
 
   function beginEditing(phrase: PhraseSnippet) {
     const isDefaultCategory = DEFAULT_PHRASE_CATEGORIES.includes(phrase.category);
@@ -1870,14 +1973,35 @@ function PhraseManager({
             <button type="button" onClick={() => beginEditing(phrase)}>编辑</button>
             <button
               type="button"
-              onClick={async () => {
-                await requestJson(`/api/phrases/${phrase.id}`, { method: "DELETE" });
-                await onReload();
-              }}
+              aria-label={`删除常用词 ${phrase.name}`}
+              onClick={() => setDeleteCandidate(phrase)}
             ><Trash2 size={14} /></button>
           </article>
         ))}
       </div>
+      {deleteCandidate && (
+        <DeleteConfirmationDialog
+          title={`删除常用词“${deleteCandidate.name}”？`}
+          description="删除后无法恢复，但已经加入结构化编辑器的词块不会被移除。"
+          pending={deletePending}
+          onCancel={() => setDeleteCandidate(null)}
+          onConfirm={() => {
+            setDeletePending(true);
+            void (async () => {
+              try {
+                await requestJson(`/api/phrases/${deleteCandidate.id}`, { method: "DELETE" });
+                await onReload();
+                setDeleteCandidate(null);
+                notify("常用词已删除。");
+              } catch (error) {
+                notify(error instanceof Error ? error.message : "常用词删除失败。");
+              } finally {
+                setDeletePending(false);
+              }
+            })();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1920,6 +2044,12 @@ function LibraryManager({
   const [folderRename, setFolderRename] = useState("");
   const [editingFavorite, setEditingFavorite] = useState<FavoriteRecord | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleteRequest, setDeleteRequest] = useState<
+    | { type: "favorites"; ids: string[] }
+    | { type: "folder"; folder: FolderRecord }
+    | null
+  >(null);
+  const [deletePending, setDeletePending] = useState(false);
 
   const selectedFolder = folders.find((folder) => folder.id === folderFilter);
   const currentIds = favorites.map((favorite) => favorite.id);
@@ -1972,13 +2102,7 @@ function LibraryManager({
 
   async function deleteFavorites(ids: string[]) {
     if (!ids.length) return;
-    const favorite = ids.length === 1 ? favorites.find((item) => item.id === ids[0]) : null;
-    const confirmed = window.confirm(
-      ids.length === 1
-        ? `确定删除作品“${favorite?.title ?? "未命名作品"}”吗？它的全部修订也会永久删除。`
-        : `确定批量删除已选择的 ${ids.length} 个作品吗？这些作品的全部修订也会永久删除。`,
-    );
-    if (!confirmed) return;
+    setDeletePending(true);
     try {
       if (ids.length === 1) {
         await requestJson(`/api/favorites/${ids[0]}`, { method: "DELETE" });
@@ -1993,8 +2117,27 @@ function LibraryManager({
       onDeleted(ids);
       await onReload();
       notify(ids.length === 1 ? "作品已删除。" : `已删除 ${ids.length} 个作品。`);
+      setDeleteRequest(null);
     } catch (error) {
       notify(error instanceof Error ? error.message : "作品删除失败。");
+    } finally {
+      setDeletePending(false);
+    }
+  }
+
+  async function deleteFolder(folder: FolderRecord) {
+    setDeletePending(true);
+    try {
+      await requestJson(`/api/folders/${folder.id}`, { method: "DELETE" });
+      onFolderFilter("");
+      setRenamingFolder(false);
+      await onReload();
+      setDeleteRequest(null);
+      notify("文件夹已删除，其中作品已移到未分类。");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "文件夹删除失败。");
+    } finally {
+      setDeletePending(false);
     }
   }
 
@@ -2052,11 +2195,8 @@ function LibraryManager({
           </button>
           <button
             type="button"
-            onClick={async () => {
-              if (!window.confirm("删除文件夹？其中作品会移到未分类，不会被删除。")) return;
-              await requestJson(`/api/folders/${folderFilter}`, { method: "DELETE" });
-              onFolderFilter("");
-              await onReload();
+            onClick={() => {
+              if (selectedFolder) setDeleteRequest({ type: "folder", folder: selectedFolder });
             }}
           ><Trash2 size={14} />删除文件夹</button>
         </div>
@@ -2089,7 +2229,7 @@ function LibraryManager({
             className="danger"
             type="button"
             disabled={!effectiveSelected.length}
-            onClick={() => void deleteFavorites(effectiveSelected)}
+            onClick={() => setDeleteRequest({ type: "favorites", ids: [...effectiveSelected] })}
           >
             <Trash2 size={14} />批量删除
           </button>
@@ -2133,7 +2273,11 @@ function LibraryManager({
               <button type="button" onClick={() => void onSaveRevision(favorite)}>当前内容另存修订</button>
               <button type="button" onClick={() => void onRevisions(favorite)}>时间线</button>
               <button type="button" onClick={() => onExport("markdown", { scope: "favorite", favoriteId: favorite.id })}>导出 MD</button>
-              <button className="danger" type="button" onClick={() => void deleteFavorites([favorite.id])}>
+              <button
+                className="danger"
+                type="button"
+                onClick={() => setDeleteRequest({ type: "favorites", ids: [favorite.id] })}
+              >
                 <Trash2 size={14} />删除作品
               </button>
             </div>
@@ -2178,6 +2322,32 @@ function LibraryManager({
             </button>
           ))}
         </section>
+      )}
+      {deleteRequest && (
+        <DeleteConfirmationDialog
+          title={
+            deleteRequest.type === "folder"
+              ? `删除文件夹“${deleteRequest.folder.name}”？`
+              : deleteRequest.ids.length === 1
+                ? `删除作品“${favorites.find((item) => item.id === deleteRequest.ids[0])?.title ?? "未命名作品"}”？`
+                : `删除 ${deleteRequest.ids.length} 个作品？`
+          }
+          description={
+            deleteRequest.type === "folder"
+              ? "文件夹会被删除，其中作品会移到未分类，作品本身不会被删除。"
+              : "删除后无法恢复，作品的全部修订也会一起永久删除。"
+          }
+          pending={deletePending}
+          confirmLabel={deleteRequest.type === "folder" ? "删除文件夹" : "确认删除"}
+          onCancel={() => setDeleteRequest(null)}
+          onConfirm={() => {
+            if (deleteRequest.type === "folder") {
+              void deleteFolder(deleteRequest.folder);
+            } else {
+              void deleteFavorites(deleteRequest.ids);
+            }
+          }}
+        />
       )}
     </div>
   );
@@ -2599,58 +2769,33 @@ function ConfigSection({
         </form>
       </details>
       {deleteCandidate && (
-        <div className="v2-modal-backdrop" role="presentation">
-          <section
-            className="v2-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={`delete-config-${kind}`}
-          >
-            <h2 id={`delete-config-${kind}`}>
-              删除“{deleteCandidate.item.label}”？
-            </h2>
-            <p>
-              删除后无法恢复。确认后只会锁定这一条配置，其他配置和添加表单仍可操作。
-            </p>
-            <div>
-              <button
-                type="button"
-                onClick={() => setDeleteCandidate(null)}
-              >
-                取消
-              </button>
-              <button
-                className="danger"
-                type="button"
-                onClick={() => {
-                  const { item, index } = deleteCandidate;
-                  setDeleteCandidate(null);
-                  setDeletingSnapshots((current) => ({
-                    ...current,
-                    [item.id]: { item, index },
-                  }));
-                  void runItemAction(
-                    item.id,
-                    "delete",
-                    async () => {
-                      await requestJson(`${base}/${item.id}`, { method: "DELETE" });
-                      onDeleted(item.id);
-                    },
-                    "配置已删除。",
-                    () => setDeletingSnapshots((current) => {
-                      const next = { ...current };
-                      delete next[item.id];
-                      return next;
-                    }),
-                  );
-                }}
-              >
-                <Trash2 size={14} />
-                确认删除
-              </button>
-            </div>
-          </section>
-        </div>
+        <DeleteConfirmationDialog
+          title={`删除“${deleteCandidate.item.label}”？`}
+          description="删除后无法恢复。确认后只会锁定这一条配置，其他配置和添加表单仍可操作。"
+          onCancel={() => setDeleteCandidate(null)}
+          onConfirm={() => {
+            const { item, index } = deleteCandidate;
+            setDeleteCandidate(null);
+            setDeletingSnapshots((current) => ({
+              ...current,
+              [item.id]: { item, index },
+            }));
+            void runItemAction(
+              item.id,
+              "delete",
+              async () => {
+                await requestJson(`${base}/${item.id}`, { method: "DELETE" });
+                onDeleted(item.id);
+              },
+              "配置已删除。",
+              () => setDeletingSnapshots((current) => {
+                const next = { ...current };
+                delete next[item.id];
+                return next;
+              }),
+            );
+          }}
+        />
       )}
     </section>
   );

@@ -6048,3 +6048,143 @@ body,
     min-height: 44px !important;
   }
 }
+
+/* Explicit click and drag affordances for phrase cards */
+.v2-draggable-phrase {
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  cursor: default;
+  touch-action: auto;
+}
+
+.v2-quick-phrases .v2-draggable-phrase-use,
+.v2-phrase-list .v2-draggable-phrase-use {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 9px 10px;
+  color: #f2efff;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.v2-quick-phrases .v2-draggable-phrase-use:hover,
+.v2-phrase-list .v2-draggable-phrase-use:hover {
+  background: rgba(139, 123, 255, .1);
+}
+
+.v2-quick-phrases .v2-draggable-phrase-handle,
+.v2-phrase-list .v2-draggable-phrase-handle {
+  display: grid;
+  width: 34px;
+  min-width: 34px;
+  height: 100%;
+  min-height: 100%;
+  place-items: center;
+  align-self: stretch;
+  border: 0;
+  border-left: 1px solid #3f3f3f;
+  border-radius: 0;
+  background: rgba(255, 255, 255, .025);
+  padding: 0;
+  color: #9e99ad;
+  cursor: grab;
+  touch-action: none;
+}
+
+.v2-quick-phrases .v2-draggable-phrase-handle:hover,
+.v2-phrase-list .v2-draggable-phrase-handle:hover {
+  color: #fff;
+  background: rgba(139, 123, 255, .18);
+}
+
+.v2-draggable-phrase-handle:active {
+  cursor: grabbing;
+}
+
+.v2-draggable-phrase:focus-within {
+  border-color: #8073ef;
+  box-shadow: 0 0 0 2px rgba(128, 115, 239, .16);
+}
+
+.v2-draggable-phrase.compact {
+  grid-template-columns: minmax(82px, 1fr) 30px;
+  overflow: hidden;
+  padding: 0;
+}
+
+.v2-phrase-list .v2-draggable-phrase.compact .v2-draggable-phrase-use {
+  padding: 6px 8px;
+}
+
+.v2-phrase-list .v2-draggable-phrase.compact .v2-draggable-phrase-handle {
+  width: 30px;
+  min-width: 30px;
+}
+
+/* Persistent-data deletion always uses an in-app confirmation layer. */
+.v2-delete-confirm-backdrop {
+  z-index: 120;
+}
+
+.v2-delete-confirm {
+  width: min(440px, 100%);
+  border-color: rgba(255, 117, 141, .32);
+  background:
+    radial-gradient(circle at 100% 0, rgba(255, 117, 141, .1), transparent 38%),
+    #242424;
+}
+
+.v2-delete-confirm > header {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.v2-delete-confirm > header > span {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  border: 1px solid rgba(255, 117, 141, .34);
+  border-radius: 11px;
+  color: #ffacbb;
+  background: rgba(255, 117, 141, .1);
+}
+
+.v2-delete-confirm > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.v2-delete-confirm > header small {
+  color: #ffacbb;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.v2-delete-confirm > div button:disabled {
+  cursor: wait;
+  opacity: .64;
+}
+
+@media (max-width: 900px) {
+  .v2-draggable-phrase {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .v2-quick-phrases .v2-draggable-phrase-handle,
+  .v2-phrase-list .v2-draggable-phrase-handle,
+  .v2-phrase-list .v2-draggable-phrase.compact .v2-draggable-phrase-handle {
+    width: 44px;
+    min-width: 44px;
+  }
+}
