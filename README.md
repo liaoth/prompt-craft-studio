@@ -14,9 +14,9 @@
 
 ## 安装客户端
 
-从构建产物选择当前系统：
+所有公开版本均可从 [GitHub Releases](https://github.com/liaoth/prompt-craft-studio/releases/latest) 免费下载，无需 GitHub 账号：
 
-- Windows：安装版 `*.exe` 或便携版 `*.exe`。
+- Windows：推荐 `*-setup.exe` 安装版，也可使用 `*-portable.exe` 便携版。
 - Linux：`*.AppImage` 或 `*.deb`。
 
 首次启动会自动创建数据库、迁移和本地加密密钥，直接进入工作台。Windows 构建目前未签名，系统可能显示 SmartScreen 提示。
@@ -59,7 +59,7 @@ npm run dist:win
 npm run dist:linux
 ```
 
-产物输出到 `release/`。仓库还包含可手动触发的 GitHub Actions 工作流，可在 Windows 和 Linux runner 上分别构建。
+产物输出到 `release/`。客户端在长期维护分支 `desktop` 上发布；推送 `desktop-v*` 标签后，GitHub Actions 会在 Windows 和 Linux runner 上分别构建，并把安装包和 SHA-256 校验文件发布到 GitHub Releases。默认分支 `main` 无需包含客户端代码。
 
 ## 数据与备份
 

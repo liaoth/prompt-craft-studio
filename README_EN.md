@@ -14,9 +14,9 @@ A private, local bilingual Midjourney prompt workspace. The Windows and Linux cl
 
 ## Install the client
 
-Choose an artifact for your platform:
+Public builds are available free of charge from [GitHub Releases](https://github.com/liaoth/prompt-craft-studio/releases/latest), with no GitHub account required:
 
-- Windows: installer `*.exe` or portable `*.exe`.
+- Windows: use the recommended `*-setup.exe` installer or the optional `*-portable.exe`.
 - Linux: `*.AppImage` or `*.deb`.
 
 The first launch creates the database, applies migrations, generates a local encryption key, and opens the workspace. Windows artifacts are currently unsigned and may trigger a SmartScreen warning.
@@ -59,7 +59,7 @@ npm run dist:win
 npm run dist:linux
 ```
 
-Artifacts are written to `release/`. A manually triggered GitHub Actions workflow builds on native Windows and Linux runners.
+Artifacts are written to `release/`. The client is released from the long-lived `desktop` branch. Pushing a `desktop-v*` tag builds on native Windows and Linux runners and publishes the packages plus SHA-256 checksums to GitHub Releases. The default `main` branch does not need to contain the desktop client.
 
 ## Data and backup
 

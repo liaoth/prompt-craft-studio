@@ -31,7 +31,23 @@ Artifacts are written to `release/`. Windows packages are currently unsigned; co
 
 ## GitHub Actions
 
-`.github/workflows/desktop-build.yml` can be dispatched manually and runs for `desktop-v*` tags. Native Windows and Linux runners upload their packages as Actions artifacts.
+The client uses a long-lived `desktop` branch; the default `main` branch does not need to contain the desktop source. When a `desktop-v*` tag pointing to a `desktop` commit is pushed, `.github/workflows/desktop-build.yml`:
+
+1. Tests and packages on native Windows and Linux runners.
+2. Uploads short-lived Actions artifacts for build diagnostics.
+3. Collects the packages and generates `SHA256SUMS.txt`.
+4. Creates a public [GitHub Release](https://github.com/liaoth/prompt-craft-studio/releases) that anyone can download.
+
+For example, to publish `1.0.0`:
+
+```bash
+git switch desktop
+git tag -a desktop-v1.0.0 -m "Prompt Craft Studio 1.0.0"
+git push origin desktop
+git push origin desktop-v1.0.0
+```
+
+The release tag points directly to the client branch; the client source does not need to be merged into `main`.
 
 ## Local web mode
 

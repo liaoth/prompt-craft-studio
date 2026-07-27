@@ -31,7 +31,23 @@ npm run dist:linux
 
 ## GitHub Actions
 
-`.github/workflows/desktop-build.yml` 可手动运行，也会在推送 `desktop-v*` 标签时执行。Windows 与 Linux 使用各自原生 runner，产物作为 Actions Artifact 上传。
+客户端使用独立的长期维护分支 `desktop`，默认分支 `main` 无需包含客户端代码。推送指向 `desktop` 提交的 `desktop-v*` 标签后，`.github/workflows/desktop-build.yml` 会：
+
+1. 在 Windows 与 Linux 原生 runner 上分别测试并构建。
+2. 上传短期 Actions Artifact，便于排查构建问题。
+3. 汇总安装包并生成 `SHA256SUMS.txt`。
+4. 创建公开的 [GitHub Release](https://github.com/liaoth/prompt-craft-studio/releases)，供所有用户直接下载。
+
+例如发布 `1.0.0`：
+
+```bash
+git switch desktop
+git tag -a desktop-v1.0.0 -m "Prompt Craft Studio 1.0.0"
+git push origin desktop
+git push origin desktop-v1.0.0
+```
+
+Release 标签直接指向客户端分支，客户端代码不需要合并到 `main`。
 
 ## 仅本地网页
 

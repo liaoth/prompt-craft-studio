@@ -57,3 +57,47 @@ jobs:
           name: prompt-craft-studio-${{ runner.os }}-x64
           path: ${{ matrix.artifacts }}
           if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: prompt-craft-studio-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Prepare release notes
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## Download
+
+          - Windows x64: use the `setup.exe` installer, or the optional `portable.exe`.
+          - Linux x64: use the `.AppImage` on most distributions, or the `.deb` package on Debian/Ubuntu.
+          - `SHA256SUMS.txt` contains checksums for every package.
+
+          The Windows packages are currently unsigned and may show a SmartScreen warning.
+          No account, Docker, Node.js, or environment variables are required after installation.
+          EOF
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#desktop-v}"
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Prompt Craft Studio $version" \
+            --notes-file release-notes.md \
+            --latest \
+            --verify-tag
