@@ -14,8 +14,10 @@ import {
   type DragEndEvent,
   type DragStartEvent,
   type CollisionDetection,
+  type Modifier,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+import { getEventCoordinates } from "@dnd-kit/utilities";
 import {
   Check,
   ChevronRight,
@@ -48,6 +50,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   providersForKind,
@@ -197,10 +200,54 @@ const VARIANT_LABELS: Record<PromptVariantKind, string> = {
   experimental: "实验性",
 };
 
+const CUSTOM_PHRASE_CATEGORY = "__custom__";
+
 const WORKBENCH_COLLISION_DETECTION: CollisionDetection = (args) => {
   const pointerCollisions = pointerWithin(args);
+
+  if (args.active.data.current?.type === "phrase") {
+    const blockCollision = pointerCollisions.find(
+      (collision) =>
+        collision.data?.droppableContainer?.data.current?.type === "block",
+    );
+    if (blockCollision) return [blockCollision];
+
+    const groupCollision = pointerCollisions.find(
+      (collision) =>
+        collision.data?.droppableContainer?.data.current?.type === "group",
+    );
+    if (groupCollision) return [groupCollision];
+
+    return closestCenter({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        (container) => container.data.current?.type === "group",
+      ),
+    });
+  }
+
   return pointerCollisions.length ? pointerCollisions : closestCenter(args);
 };
+
+const SNAP_PHRASE_PREVIEW_TO_CURSOR: Modifier = ({
+  activatorEvent,
+  draggingNodeRect,
+  transform,
+}) => {
+  if (!activatorEvent || !draggingNodeRect) return transform;
+  const coordinates = getEventCoordinates(activatorEvent);
+  if (!coordinates) return transform;
+
+  const offsetX = coordinates.x - draggingNodeRect.left;
+  const offsetY = coordinates.y - draggingNodeRect.top;
+  return {
+    ...transform,
+    x: transform.x + offsetX - draggingNodeRect.width / 2,
+    y: transform.y + offsetY - draggingNodeRect.height / 2,
+  };
+};
+
+const PHRASE_PREVIEW_MODIFIERS = [SNAP_PHRASE_PREVIEW_TO_CURSOR];
 
 class ApiRequestError extends Error {
   constructor(
@@ -281,7 +328,7 @@ function insertPhraseBlock(
   target.splice(Math.min(Math.max(index ?? target.length, 0), target.length), 0, block);
   return normalizeBlockOrder([
     ...blocks.filter((item) => item.field !== field),
-    ...target,
+    ...target.map((item, order) => ({ ...item, order })),
   ]);
 }
 
@@ -1421,6 +1468,7 @@ export function PromptWorkbench() {
                   records={historyItems}
                   empty="还没有生成历史。"
                   onRestore={(record) => restoreSnapshot(record.snapshot)}
+                  onCopy={(record) => void copy(record.promptEn, "历史 Prompt")}
                   onReload={loadHistory}
                   notify={notify}
                 />
@@ -1472,9 +1520,22 @@ export function PromptWorkbench() {
         </>
       )}
 
-      <DragOverlay adjustScale={false} dropAnimation={null}>
-        {activeDrag && <DragPreview item={activeDrag} />}
-      </DragOverlay>
+      {typeof document !== "undefined" &&
+        createPortal(
+          <DragOverlay
+            adjustScale={false}
+            dropAnimation={null}
+            modifiers={
+              activeDrag?.type === "phrase"
+                ? PHRASE_PREVIEW_MODIFIERS
+                : undefined
+            }
+            zIndex={100}
+          >
+            {activeDrag && <DragPreview item={activeDrag} />}
+          </DragOverlay>,
+          document.body,
+        )}
       </DndContext>
 
       {templateChoice && (
@@ -1579,12 +1640,14 @@ function RecordList({
   records,
   empty,
   onRestore,
+  onCopy,
   onReload,
   notify,
 }: {
   records: PromptRecord[];
   empty: string;
   onRestore: (record: PromptRecord) => void;
+  onCopy: (record: PromptRecord) => void;
   onReload: () => Promise<void>;
   notify: (message: string) => void;
 }) {
@@ -1666,6 +1729,9 @@ function RecordList({
               <button type="button" onClick={() => onRestore(record)}>
                 <RefreshCw size={14} />恢复到编辑器
               </button>
+              <button type="button" onClick={() => onCopy(record)}>
+                <Copy size={14} />复制 Prompt
+              </button>
               <button className="danger" type="button" onClick={() => void deleteRecords([record.id])}>
                 <Trash2 size={14} />删除
               </button>
@@ -1690,13 +1756,31 @@ function PhraseManager({
 }) {
   const [editing, setEditing] = useState<PhraseSnippet | null>(null);
   const [query, setQuery] = useState("");
+  const [categoryChoice, setCategoryChoice] = useState("");
+  const [customCategory, setCustomCategory] = useState("");
+
+  function beginEditing(phrase: PhraseSnippet) {
+    const isDefaultCategory = DEFAULT_PHRASE_CATEGORIES.includes(phrase.category);
+    setEditing(phrase);
+    setCategoryChoice(isDefaultCategory ? phrase.category : CUSTOM_PHRASE_CATEGORY);
+    setCustomCategory(isDefaultCategory ? "" : phrase.category);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    const category =
+      categoryChoice === CUSTOM_PHRASE_CATEGORY
+        ? customCategory.trim()
+        : categoryChoice;
+    if (!category) {
+      notify("请选择分类或填写自定义分类。");
+      return;
+    }
     const payload = {
       name: String(data.get("name")),
-      category: String(data.get("category") || "未分类"),
+      category,
       content: String(data.get("content")),
       sortOrder: Number(data.get("sortOrder") || 0),
     };
@@ -1706,6 +1790,8 @@ function PhraseManager({
         body: JSON.stringify(payload),
       });
       setEditing(null);
+      setCategoryChoice("");
+      setCustomCategory("");
       form.reset();
       await onReload();
       notify("常用词已保存。");
@@ -1718,10 +1804,47 @@ function PhraseManager({
   );
   return (
     <div className="v2-manager">
-      <form onSubmit={submit} key={editing?.id ?? "new"}>
-        <input name="name" defaultValue={editing?.name} placeholder="名称" required maxLength={80} />
-        <input name="category" defaultValue={editing?.category ?? "未分类"} placeholder="分类" required />
-        <input name="content" defaultValue={editing?.content} placeholder="词语或短语内容" required maxLength={500} />
+      <form className="v2-phrase-form" onSubmit={submit} key={editing?.id ?? "new"}>
+        <input
+          className="v2-phrase-name-field"
+          name="name"
+          defaultValue={editing?.name}
+          placeholder="名称"
+          required
+          maxLength={80}
+        />
+        <div className="v2-phrase-category-field">
+          <select
+            value={categoryChoice}
+            onChange={(event) => setCategoryChoice(event.target.value)}
+            aria-label="分类"
+            required
+          >
+            <option value="" disabled>请选择分类</option>
+            {DEFAULT_PHRASE_CATEGORIES.map((category) => (
+              <option key={category} value={category}>{category}</option>
+            ))}
+            <option value={CUSTOM_PHRASE_CATEGORY}>自定义分类</option>
+          </select>
+          {categoryChoice === CUSTOM_PHRASE_CATEGORY && (
+            <input
+              value={customCategory}
+              onChange={(event) => setCustomCategory(event.target.value)}
+              placeholder="输入自定义分类"
+              aria-label="自定义分类"
+              required
+              maxLength={50}
+            />
+          )}
+        </div>
+        <input
+          className="v2-phrase-content-field"
+          name="content"
+          defaultValue={editing?.content}
+          placeholder="词语或短语内容"
+          required
+          maxLength={500}
+        />
         <label className="v2-sort-field">
           <span>排序</span>
           <input
@@ -1734,7 +1857,9 @@ function PhraseManager({
           />
           <small>数字越小越靠前，最小为 0</small>
         </label>
-        <button className="v2-primary" type="submit"><Save size={14} />{editing ? "更新" : "保存"}</button>
+        <button className="v2-primary v2-phrase-save" type="submit">
+          <Save size={14} />{editing ? "更新" : "保存"}
+        </button>
       </form>
       <input className="v2-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索名称、分类或内容" />
       <div className="v2-phrase-list">
@@ -1742,7 +1867,7 @@ function PhraseManager({
           <article key={phrase.id}>
             <div><small>{phrase.category}</small><strong>{phrase.name}</strong><p>{phrase.content}</p></div>
             <DraggablePhrase phrase={personalPhraseItem(phrase)} onUse={onUse} compact />
-            <button type="button" onClick={() => setEditing(phrase)}>编辑</button>
+            <button type="button" onClick={() => beginEditing(phrase)}>编辑</button>
             <button
               type="button"
               onClick={async () => {

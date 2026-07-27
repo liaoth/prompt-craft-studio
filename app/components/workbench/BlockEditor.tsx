@@ -1,6 +1,6 @@
 "use client";
 
-import { useDroppable } from "@dnd-kit/core";
+import { useDndContext, useDroppable } from "@dnd-kit/core";
 import {
   SortableContext,
   useSortable,
@@ -76,10 +76,14 @@ function BlockGroup({
     id: `group-${field}`,
     data: { type: "group", field },
   });
+  const { active, over } = useDndContext();
+  const isPhraseOverGroup =
+    active?.data.current?.type === "phrase" &&
+    over?.data.current?.field === field;
   return (
     <section
       ref={setNodeRef}
-      className={`v2-block-group${isOver ? " is-over" : ""}`}
+      className={`v2-block-group${isOver || isPhraseOverGroup ? " is-over" : ""}`}
       data-field={field}
       aria-label={PROMPT_FIELD_LABELS[field]}
     >

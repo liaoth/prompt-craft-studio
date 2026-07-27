@@ -3123,7 +3123,7 @@ select:disabled {
   padding: 10px;
 }
 
-.v2-manager > form input:nth-child(3),
+.v2-phrase-content-field,
 .v2-config-section form input[type="url"] {
   grid-column: 1 / -1;
 }
@@ -3658,7 +3658,7 @@ select:disabled {
   .v2-config-section form {
     grid-template-columns: 1fr;
   }
-  .v2-manager > form input:nth-child(3),
+  .v2-phrase-content-field,
   .v2-config-section form input[type="url"] {
     grid-column: auto;
   }
@@ -6006,5 +6006,45 @@ body,
     min-height: 32px !important;
     opacity: 1;
     pointer-events: auto;
+  }
+}
+
+/* Phrase manager sizing and category controls */
+.v2-phrases-title > button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+}
+
+.v2-phrase-category-field {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.v2-phrase-form {
+  align-items: start;
+}
+
+.v2-phrase-save {
+  align-self: center;
+  height: 39px;
+  min-height: 39px !important;
+}
+
+@media (max-width: 900px) {
+  .v2-phrases-title > button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    flex-basis: 44px;
+  }
+
+  .v2-phrase-save {
+    height: 44px;
+    min-height: 44px !important;
   }
 }
