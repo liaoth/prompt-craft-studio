@@ -2151,31 +2151,33 @@ function ConfigSection({
   const [endpointValue, setEndpointValue] = useState(defaults.endpoint);
   const [apiKeyValue, setApiKeyValue] = useState(defaults.apiKey);
   const [expandedHelpId, setExpandedHelpId] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [deletingSnapshot, setDeletingSnapshot] = useState<{
-    item: PublicConfig;
-    index: number;
-  } | null>(null);
-  const pendingActionRef = useRef(false);
+  const [pendingItemActions, setPendingItemActions] = useState<
+    Record<string, "toggle" | "test" | "delete">
+  >({});
+  const [deletingSnapshots, setDeletingSnapshots] = useState<
+    Record<string, { item: PublicConfig; index: number }>
+  >({});
+  const [createPending, setCreatePending] = useState(false);
+  const pendingItemActionsRef = useRef(new Set<string>());
+  const createPendingRef = useRef(false);
   const createDetailsRef = useRef<HTMLDetailsElement>(null);
   const selectedHelp = serviceConfigHelp(selectedProvider);
   const providerOptions = providersForKind(kind);
-  const busy = pendingAction !== null;
+  const busy = createPending || Object.keys(pendingItemActions).length > 0;
   const visibleItems = useMemo(() => {
-    if (
-      !deletingSnapshot ||
-      items.some((item) => item.id === deletingSnapshot.item.id)
-    ) {
-      return items;
-    }
     const next = [...items];
-    next.splice(
-      Math.min(deletingSnapshot.index, next.length),
-      0,
-      deletingSnapshot.item,
-    );
+    Object.values(deletingSnapshots)
+      .sort((left, right) => left.index - right.index)
+      .forEach((snapshot) => {
+        if (next.some((item) => item.id === snapshot.item.id)) return;
+        next.splice(
+          Math.min(snapshot.index, next.length),
+          0,
+          snapshot.item,
+        );
+      });
     return next;
-  }, [deletingSnapshot, items]);
+  }, [deletingSnapshots, items]);
 
   function selectProvider(provider: string) {
     setSelectedProvider(provider);
@@ -2192,24 +2194,47 @@ function ConfigSection({
     });
   }
 
-  async function runConfigAction(
-    actionKey: string,
+  async function runItemAction(
+    itemId: string,
+    actionType: "toggle" | "test" | "delete",
     action: () => Promise<void>,
     successMessage?: string,
     onSettled?: () => void,
   ) {
-    if (pendingActionRef.current) return;
-    pendingActionRef.current = true;
-    setPendingAction(actionKey);
+    if (pendingItemActionsRef.current.has(itemId)) return;
+    pendingItemActionsRef.current.add(itemId);
+    setPendingItemActions((current) => ({
+      ...current,
+      [itemId]: actionType,
+    }));
     try {
       await action();
       if (successMessage) notify(successMessage);
     } catch (error) {
       notify(error instanceof Error ? error.message : "配置操作失败。");
     } finally {
-      pendingActionRef.current = false;
+      pendingItemActionsRef.current.delete(itemId);
       onSettled?.();
-      setPendingAction(null);
+      setPendingItemActions((current) => {
+        const next = { ...current };
+        delete next[itemId];
+        return next;
+      });
+    }
+  }
+
+  async function runCreateAction(action: () => Promise<void>) {
+    if (createPendingRef.current) return;
+    createPendingRef.current = true;
+    setCreatePending(true);
+    try {
+      await action();
+      notify("配置已加密保存。");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "配置操作失败。");
+    } finally {
+      createPendingRef.current = false;
+      setCreatePending(false);
     }
   }
 
@@ -2219,19 +2244,26 @@ function ConfigSection({
         <div><h3>{title}</h3><p>{description}</p></div>
         <span>{visibleItems.length} 个</span>
       </header>
-      {pendingAction?.startsWith("delete:") && deletingSnapshot && (
-        <div className="v2-config-progress" role="status" aria-live="polite">
+      {Object.values(deletingSnapshots).map(({ item }) => (
+        <div
+          className="v2-config-progress"
+          role="status"
+          aria-live="polite"
+          key={item.id}
+        >
           <LoaderCircle className="spin" size={15} />
           <span>
-            正在删除“{deletingSnapshot.item.label}”，删除完成后将立即恢复操作。
+            正在删除“{item.label}”；其他配置和添加表单仍可操作。
           </span>
         </div>
-      )}
+      ))}
       {!visibleItems.length && (
         <p className="v2-config-empty">暂无配置，可按需添加。</p>
       )}
       {visibleItems.map((item, index) => {
-        const deleting = pendingAction === `delete:${item.id}`;
+        const pendingItemAction = pendingItemActions[item.id];
+        const itemBusy = pendingItemAction !== undefined;
+        const deleting = pendingItemAction === "delete";
         return (
           <div
             className={`v2-config-item${deleting ? " is-deleting" : ""}`}
@@ -2249,7 +2281,7 @@ function ConfigSection({
               {item.isActive && <span>已启用</span>}
               <button
                 type="button"
-                disabled={busy}
+                disabled={itemBusy}
                 aria-expanded={expandedHelpId === item.id}
                 onClick={() => setExpandedHelpId((current) => current === item.id ? null : item.id)}
               >
@@ -2257,9 +2289,10 @@ function ConfigSection({
               </button>
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => void runConfigAction(
-                  `toggle:${item.id}`,
+                disabled={itemBusy}
+                onClick={() => void runItemAction(
+                  item.id,
+                  "toggle",
                   async () => {
                     await requestJson(`${base}/${item.id}`, {
                       method: "PATCH",
@@ -2270,16 +2303,17 @@ function ConfigSection({
                   item.isActive ? "配置已停用。" : "配置已启用。",
                 )}
               >
-                {pendingAction === `toggle:${item.id}` && (
+                {pendingItemAction === "toggle" && (
                   <LoaderCircle className="spin" size={13} />
                 )}
                 {item.isActive ? "停用" : "启用"}
               </button>
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => void runConfigAction(
-                  `test:${item.id}`,
+                disabled={itemBusy}
+                onClick={() => void runItemAction(
+                  item.id,
+                  "test",
                   async () => {
                     await requestJson(`${base}/test`, {
                       method: "POST",
@@ -2289,26 +2323,34 @@ function ConfigSection({
                   "连接测试成功。",
                 )}
               >
-                {pendingAction === `test:${item.id}` && (
+                {pendingItemAction === "test" && (
                   <LoaderCircle className="spin" size={13} />
                 )}
                 测试
               </button>
               <button
                 type="button"
-                disabled={busy}
+                disabled={itemBusy}
                 onClick={() => {
-                  if (pendingActionRef.current) return;
+                  if (pendingItemActionsRef.current.has(item.id)) return;
                   if (!window.confirm(`确定删除配置“${item.label}”吗？`)) return;
-                  setDeletingSnapshot({ item, index });
-                  void runConfigAction(
-                    `delete:${item.id}`,
+                  setDeletingSnapshots((current) => ({
+                    ...current,
+                    [item.id]: { item, index },
+                  }));
+                  void runItemAction(
+                    item.id,
+                    "delete",
                     async () => {
                       await requestJson(`${base}/${item.id}`, { method: "DELETE" });
                       onDeleted(item.id);
                     },
                     "配置已删除。",
-                    () => setDeletingSnapshot(null),
+                    () => setDeletingSnapshots((current) => {
+                      const next = { ...current };
+                      delete next[item.id];
+                      return next;
+                    }),
                   );
                 }}
                 aria-label={`删除配置 ${item.label}`}
@@ -2328,7 +2370,7 @@ function ConfigSection({
         <button
           className="v2-config-local-entry"
           type="button"
-          disabled={busy}
+          disabled={createPending}
           onClick={() => openCreateForm("ollama")}
         >
           <Laptop size={15} />
@@ -2338,9 +2380,9 @@ function ConfigSection({
       )}
       <details className="v2-config-create" ref={createDetailsRef}>
         <summary
-          aria-disabled={busy}
+          aria-disabled={createPending}
           onClick={(event) => {
-            if (busy) event.preventDefault();
+            if (createPending) event.preventDefault();
           }}
         >
           <Plus size={14} />添加{kind === "ai" ? "个人模型" : kind === "translation" ? "个人翻译" : "推送入口"}
@@ -2349,7 +2391,7 @@ function ConfigSection({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (pendingAction) return;
+            if (createPendingRef.current) return;
             const formElement = event.currentTarget;
             const form = new FormData(formElement);
             const payload: Record<string, unknown> = {
@@ -2360,22 +2402,18 @@ function ConfigSection({
               isActive: true,
             };
             if (kind === "ai") payload.model = String(form.get("model"));
-            void runConfigAction(
-              "create",
-              async () => {
-                await requestJson(base, {
-                  method: "POST",
-                  body: JSON.stringify(payload),
-                });
-                setSelectedProvider(defaults.provider);
-                setLabelValue(defaults.label);
-                setModelValue(defaults.model);
-                setEndpointValue(defaults.endpoint);
-                setApiKeyValue(defaults.apiKey);
-                await onReload();
-              },
-              "配置已加密保存。",
-            );
+            void runCreateAction(async () => {
+              await requestJson(base, {
+                method: "POST",
+                body: JSON.stringify(payload),
+              });
+              setSelectedProvider(defaults.provider);
+              setLabelValue(defaults.label);
+              setModelValue(defaults.model);
+              setEndpointValue(defaults.endpoint);
+              setApiKeyValue(defaults.apiKey);
+              await onReload();
+            });
           }}
         >
           <label>配置名称
@@ -2384,7 +2422,7 @@ function ConfigSection({
               value={labelValue}
               onChange={(event) => setLabelValue(event.target.value)}
               placeholder={`例如：我的 ${providerLabel(selectedProvider)}`}
-              disabled={busy}
+              disabled={createPending}
               required
             />
           </label>
@@ -2393,7 +2431,7 @@ function ConfigSection({
               name="provider"
               value={selectedProvider}
               onChange={(event) => selectProvider(event.target.value)}
-              disabled={busy}
+              disabled={createPending}
             >
               {providerOptions.map((item) => (
                 <option key={item} value={item}>{providerLabel(item)}</option>
@@ -2407,7 +2445,7 @@ function ConfigSection({
                 value={modelValue}
                 onChange={(event) => setModelValue(event.target.value)}
                 placeholder={selectedHelp.modelPlaceholder}
-                disabled={busy}
+                disabled={createPending}
                 required
               />
             </label>
@@ -2419,7 +2457,7 @@ function ConfigSection({
               onChange={(event) => setEndpointValue(event.target.value)}
               type="url"
               placeholder={selectedHelp.endpointPlaceholder}
-              disabled={busy}
+              disabled={createPending}
               required={kind === "push" || selectedProvider === "custom"}
             />
           </label>
@@ -2430,7 +2468,7 @@ function ConfigSection({
               onChange={(event) => setApiKeyValue(event.target.value)}
               type="password"
               placeholder={selectedHelp.apiKeyPlaceholder}
-              disabled={busy}
+              disabled={createPending}
               required={
                 (kind === "ai" && selectedProvider !== "ollama") ||
                 selectedProvider === "deepl" ||
@@ -2441,9 +2479,9 @@ function ConfigSection({
           <button
             className="v2-primary"
             type="submit"
-            disabled={pendingAction !== null}
+            disabled={createPending}
           >
-            {pendingAction === "create"
+            {createPending
               ? <LoaderCircle className="spin" size={14} />
               : <Plus size={14} />}
             保存并启用
