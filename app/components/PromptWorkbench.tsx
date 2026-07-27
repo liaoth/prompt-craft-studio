@@ -2157,13 +2157,16 @@ function ConfigSection({
   const [deletingSnapshots, setDeletingSnapshots] = useState<
     Record<string, { item: PublicConfig; index: number }>
   >({});
+  const [deleteCandidate, setDeleteCandidate] = useState<{
+    item: PublicConfig;
+    index: number;
+  } | null>(null);
   const [createPending, setCreatePending] = useState(false);
   const pendingItemActionsRef = useRef(new Set<string>());
   const createPendingRef = useRef(false);
   const createDetailsRef = useRef<HTMLDetailsElement>(null);
   const selectedHelp = serviceConfigHelp(selectedProvider);
   const providerOptions = providersForKind(kind);
-  const busy = createPending || Object.keys(pendingItemActions).length > 0;
   const visibleItems = useMemo(() => {
     const next = [...items];
     Object.values(deletingSnapshots)
@@ -2239,7 +2242,7 @@ function ConfigSection({
   }
 
   return (
-    <section className="v2-config-section" aria-busy={busy}>
+    <section className="v2-config-section">
       <header className="v2-config-heading">
         <div><h3>{title}</h3><p>{description}</p></div>
         <span>{visibleItems.length} 个</span>
@@ -2269,7 +2272,7 @@ function ConfigSection({
             className={`v2-config-item${deleting ? " is-deleting" : ""}`}
             key={item.id}
           >
-            <article>
+            <article aria-busy={itemBusy}>
               <div>
                 <strong>{item.label}</strong>
                 <small>
@@ -2333,25 +2336,7 @@ function ConfigSection({
                 disabled={itemBusy}
                 onClick={() => {
                   if (pendingItemActionsRef.current.has(item.id)) return;
-                  if (!window.confirm(`确定删除配置“${item.label}”吗？`)) return;
-                  setDeletingSnapshots((current) => ({
-                    ...current,
-                    [item.id]: { item, index },
-                  }));
-                  void runItemAction(
-                    item.id,
-                    "delete",
-                    async () => {
-                      await requestJson(`${base}/${item.id}`, { method: "DELETE" });
-                      onDeleted(item.id);
-                    },
-                    "配置已删除。",
-                    () => setDeletingSnapshots((current) => {
-                      const next = { ...current };
-                      delete next[item.id];
-                      return next;
-                    }),
-                  );
+                  setDeleteCandidate({ item, index });
                 }}
                 aria-label={`删除配置 ${item.label}`}
               >
@@ -2488,6 +2473,60 @@ function ConfigSection({
           </button>
         </form>
       </details>
+      {deleteCandidate && (
+        <div className="v2-modal-backdrop" role="presentation">
+          <section
+            className="v2-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`delete-config-${kind}`}
+          >
+            <h2 id={`delete-config-${kind}`}>
+              删除“{deleteCandidate.item.label}”？
+            </h2>
+            <p>
+              删除后无法恢复。确认后只会锁定这一条配置，其他配置和添加表单仍可操作。
+            </p>
+            <div>
+              <button
+                type="button"
+                onClick={() => setDeleteCandidate(null)}
+              >
+                取消
+              </button>
+              <button
+                className="danger"
+                type="button"
+                onClick={() => {
+                  const { item, index } = deleteCandidate;
+                  setDeleteCandidate(null);
+                  setDeletingSnapshots((current) => ({
+                    ...current,
+                    [item.id]: { item, index },
+                  }));
+                  void runItemAction(
+                    item.id,
+                    "delete",
+                    async () => {
+                      await requestJson(`${base}/${item.id}`, { method: "DELETE" });
+                      onDeleted(item.id);
+                    },
+                    "配置已删除。",
+                    () => setDeletingSnapshots((current) => {
+                      const next = { ...current };
+                      delete next[item.id];
+                      return next;
+                    }),
+                  );
+                }}
+              >
+                <Trash2 size={14} />
+                确认删除
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </section>
   );
 }
